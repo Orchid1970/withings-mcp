@@ -3,11 +3,11 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from src.database import get_db
-from src.models import TokenRecord
-from src.encryption import encrypt_token
+# from sqlalchemy.ext.asyncio import AsyncSession # Comment out for now
+# from sqlalchemy import select # Comment out for now
+# from src.database import get_db # Comment out for now
+# from src.models import TokenRecord # Comment out for now
+# from src.encryption import encrypt_token # Comment out for now
 from src.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,8 @@ async def initiate_oauth():
     return RedirectResponse(url)
 
 @router.get("/withings/callback")
-async def oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_db)):
+async def oauth_callback(code: str, state: str # , db: AsyncSession = Depends(get_db) # Comment out db dependency
+):
     settings = get_settings()
     
     async with httpx.AsyncClient() as client:
@@ -49,23 +50,29 @@ async def oauth_callback(code: str, state: str, db: AsyncSession = Depends(get_d
         
         body = data["body"]
         user_id = str(body["userid"])
+        access_token = body["access_token"]
+        refresh_token = body["refresh_token"]
+        expires_in = body["expires_in"]
+
+        # Temporarily log tokens for retrieval
+        logger.info(f"OAuth complete for user {user_id}. Access Token: {access_token}, Refresh Token: {refresh_token}, Expires In: {expires_in} seconds.")
         
-        result = await db.execute(select(TokenRecord).where(TokenRecord.user_id == user_id))
-        token = result.scalar_one_or_none()
+        # Temporarily comment out database storage since you don't have a database set up for TokenRecord
+        # result = await db.execute(select(TokenRecord).where(TokenRecord.user_id == user_id))
+        # token = result.scalar_one_or_none()
         
-        if token:
-            token.access_token_encrypted = encrypt_token(body["access_token"])
-            token.refresh_token_encrypted = encrypt_token(body["refresh_token"])
-            token.expires_at = datetime.utcnow() + timedelta(seconds=body["expires_in"])
-        else:
-            token = TokenRecord(
-                user_id=user_id,
-                access_token_encrypted=encrypt_token(body["access_token"]),
-                refresh_token_encrypted=encrypt_token(body["refresh_token"]),
-                expires_at=datetime.utcnow() + timedelta(seconds=body["expires_in"])
-            )
-            db.add(token)
+        # if token:
+        #     token.access_token_encrypted = encrypt_token(body["access_token"])
+        #     token.refresh_token_encrypted = encrypt_token(body["refresh_token"])
+        #     token.expires_at = datetime.utcnow() + timedelta(seconds=body["expires_in"])
+        # else:
+        #     token = TokenRecord(
+        #         user_id=user_id,
+        #         access_token_encrypted=encrypt_token(body["access_token"]),
+        #         refresh_token_encrypted=encrypt_token(body["refresh_token"]),
+        #         expires_at=datetime.utcnow() + timedelta(seconds=body["expires_in"])
+        #     )
+        #     db.add(token)
         
-        await db.commit()
-        logger.info(f"OAuth complete for user {user_id}")
-        return {"status": "connected", "user_id": user_id}
+        # await db.commit() # Comment out
+        return {"status": "connected", "user_id": user_id, "access_token_debug": access_token, "refresh_token_debug": refresh_token} # Added debug output
