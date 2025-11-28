@@ -3,9 +3,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException
 import httpx
 from datetime import datetime, timedelta, timezone
-from src.schemas import WithingsObservation # Assuming WithingsObservation schema is defined
-from src.config import get_settings
-
+from ..schemas import WithingsObservationfrom src.config import get_settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
