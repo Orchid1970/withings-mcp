@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(api: FastAPI):
     logger.info("Starting Withings MCP...")
     await init_db() # Still commented out for now
-    #start_scheduler() # Still commented out for now
+    start_scheduler() # Still commented out for now
     yield
     logger.info("Shutting down Withings MCP...")
 
