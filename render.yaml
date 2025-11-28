@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: withings-mcp
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: uvicorn src.app:api --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: WITHINGS_CLIENT_ID
+        sync: false
+      - key: WITHINGS_CLIENT_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: BASE_URL
+        sync: false
+    plan: free
