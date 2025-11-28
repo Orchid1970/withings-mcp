@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(api: FastAPI): # Changed 'app' to 'api' here
     logger.info("Starting Withings MCP...")
-    await init_db()
-    start_scheduler()
+    #await init_db()
+    #start_scheduler()
     yield
     logger.info("Shutting down Withings MCP...")
 
