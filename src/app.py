@@ -5,7 +5,6 @@ from pydantic import BaseModel
 # from .database import get_db # If you have a separate database module
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
 from src.database import init_db
 from src.routes.health import router as health_router
 from src.routes.auth import router as auth_router
@@ -20,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(api: FastAPI): # Changed 'app' to 'api' here
     logger.info("Starting Withings MCP...")
     await init_db()
     start_scheduler()
@@ -33,7 +32,7 @@ api = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-# After app = FastAPI() instance, but before lifecycle events or after router imports
+
 # Define your FHIR-like Observation Pydantic model
 # IMPORTANT: You'll need to adjust these fields to match the
 # exact structure of the FHIR-like Observation data you are storing.
@@ -64,17 +63,16 @@ def get_current_user_id() -> str:
     # you might hardcode it or retrieve it from a secure environment variable
     # tied to user 13932981 if your MCP supports multiple users.
     # Given the previous logs, user 13932981 is the one you've authorized.
-    return "13932981" # Replace with actual dynamic user ID retrieval if applicableapi.include_router(health_router)
+    return "13932981" # Replace with actual dynamic user ID retrieval if applicable
+
+# --- Include API routers AFTER the 'api' instance is defined ---
+api.include_router(health_router)
 api.include_router(auth_router, prefix="/auth")
 api.include_router(workflows_router, prefix="/workflows")
-# ... (existing app.include_router calls)
-# app.include_router(health_router)
-# app.include_router(auth_router)
-# app.include_router(workflows_router)
 
 # --- Start of new /observations endpoint code ---
 
-@app.get("/observations", response_model=List[WithingsObservation])
+@api.get("/observations", response_model=List[WithingsObservation]) # Changed '@app.get' to '@api.get'
 async def get_all_observations_for_user(user_id: str = Depends(get_current_user_id)):
     """
     Retrieve all FHIR-like Observation resources for the authenticated user.
