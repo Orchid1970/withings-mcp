@@ -12,6 +12,33 @@
 - SQLite (dev) / PostgreSQL (prod) support
 - Docker-ready with Railway & Render configs
 
+## Authentication Requirements
+
+When launching this MCP in an orchestration tool, you will need the following authentication tokens configured as environment variables:
+
+### Required Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `WITHINGS_CLIENT_ID` | Yes | Your Withings Developer App Client ID |
+| `WITHINGS_CLIENT_SECRET` | Yes | Your Withings Developer App Client Secret |
+| `WITHINGS_ACCESS_TOKEN` | Yes | OAuth2 access token for Withings API |
+| `WITHINGS_REFRESH_TOKEN` | Optional | OAuth2 refresh token for automatic token renewal (tokens will need manual renewal if not provided) |
+| `ENCRYPTION_KEY` | Yes (for DB storage) | Fernet encryption key for secure token storage |
+| `DATABASE_URL` | Optional | Database connection string (defaults to SQLite) |
+| `BASE_URL` | Optional | Base URL of your deployed service |
+
+### How to Obtain Tokens
+
+1. **Create a Withings Developer App**: Register at [Withings Developer Portal](https://developer.withings.com/) to get your `WITHINGS_CLIENT_ID` and `WITHINGS_CLIENT_SECRET`.
+
+2. **Get Access Token via OAuth Flow**:
+   - Start the server and visit `/auth/withings` to initiate the OAuth flow
+   - After authorization, you'll receive the access and refresh tokens
+   - Set these as `WITHINGS_ACCESS_TOKEN` and `WITHINGS_REFRESH_TOKEN` in your environment
+
+3. **For Orchestration Tools**: Configure these environment variables in your orchestration tool's settings before launching the MCP.
+
 ## Quick Start
 
 ### 1. Clone & Install
