@@ -3,8 +3,12 @@ from typing import List
 from fastapi import APIRouter, HTTPException
 import httpx
 from datetime import datetime, timedelta, timezone
-from ..schemas import WithingsObservation
+from src.schemas import WithingsObservation
 from src.config import get_settings
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
 # Withings API Base URL for measures
 WITHINGS_MEASURE_API_URL = "https://wbsapi.withings.net/measure"
 
