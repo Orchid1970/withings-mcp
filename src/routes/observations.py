@@ -106,11 +106,13 @@ async def get_all_observations_for_user():
                 logger.error(f"Unexpected error processing Withings data for meastype {withings_meastype_id}: {e}")
                 raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
-    # Sort observations by date, most recent first
+        # Sort observations by date, most recent first
     all_withings_observations.sort(key=lambda obs: obs.effectiveDateTime, reverse=True)
     
     return all_withings_observations
-    @router.get("/health_check")
+
+
+@router.get("/health_check")
 async def health_check():
     """
     Simple health check endpoint for the Withings MCP service.
