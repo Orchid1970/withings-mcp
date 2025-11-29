@@ -54,12 +54,17 @@ async def get_all_observations_for_user():
                 response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
                 withings_data_json = response.json()
 
-                if withings_data_json.get("status") != 0:
-                    error_message = withings_data_json.get("error", {}).get("message", "Unknown Withings API error")
-                    logger.error(f"Withings API error for meastype {withings_meastype_id}: {error_message} (Status: {withings_data_json.get('status')})")
-                    # In a production system, you might want to handle specific errors like token expiry here
-                    continue 
-                
+               if withings_data_json.get("status") != 0:
+    error_message = "Unknown Withings API error"
+    if isinstance(withings_data_json.get("error"), dict):
+        error_message = withings_data_json.get("error", {}).get("message", "Unknown Withings API error")
+    elif isinstance(withings_data_json.get("error"), str):
+        error_message = withings_data_json.get("error")
+    
+    logger.error(f"Withings API error for meastype {withings_meastype_id}: {error_message} (Status: {withings_data_json.get('status')})")
+    # In a production system, you might want to handle specific errors like token expiry here
+    continue
+    
                 measure_groups = withings_data_json["body"].get("measuregrps", [])
                 
                 for group in measure_groups:
