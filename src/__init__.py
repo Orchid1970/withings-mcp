@@ -1,3 +1,4 @@
-from .withings_observation import WithingsObservation
+from .schemas import WithingsObservation
 # Makes src a package
+
 
