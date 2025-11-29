@@ -1,0 +1,1 @@
+from .withings_observation import WithingsObservation
