@@ -1,0 +1,32 @@
+{
+  "name": "withings-mcp",
+  "version": "1.0.0",
+  "description": "Withings health data integration - Timothy's health optimization tracking",
+  "type": "http",
+  "baseUrl": "https://withings-mcp-production.up.railway.app",
+  "tools": [
+    {
+      "name": "get_observations",
+      "description": "Fetch Withings health observations (Weight, BMI, Heart Rate)",
+      "endpoint": "/observations",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days to fetch (default: 7)",
+          "required": false
+        }
+      }
+    },
+    {
+      "name": "health_check",
+      "description": "Check service health status",
+      "endpoint": "/health",
+      "method": "GET"
+    }
+  ],
+  "authentication": {
+    "type": "bearer",
+    "tokenEnvVar": "WITHINGS_MCP_AUTH_TOKEN"
+  }
+}
