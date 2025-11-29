@@ -110,3 +110,14 @@ async def get_all_observations_for_user():
     all_withings_observations.sort(key=lambda obs: obs.effectiveDateTime, reverse=True)
     
     return all_withings_observations
+    @router.get("/health_check")
+async def health_check():
+    """
+    Simple health check endpoint for the Withings MCP service.
+    Returns 200 OK if the service is running.
+    """
+    return {
+        "status": "healthy",
+        "service": "Withings MCP for Health Information",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
