@@ -1,1 +1,1 @@
-from .schemas import WithingsObservation
+from src.schemas import WithingsObservation
