@@ -2,6 +2,32 @@
 
 **Health Data Orchestrator** - A FastAPI service that connects to Withings, ingests health data, and normalizes it to FHIR-like Observations.
 
+## Token Requirements
+
+**Yes, you need tokens to run this MCP.** Here's what you need:
+
+### Required Credentials
+
+1. **Withings API Credentials** (Required before first run):
+   - `WITHINGS_CLIENT_ID` - Your Withings application Client ID
+   - `WITHINGS_CLIENT_SECRET` - Your Withings application Client Secret
+   
+   **How to obtain**: Register as a developer at the [Withings Developer Portal](https://developer.withings.com/) and create an application to get these credentials.
+
+2. **Encryption Key** (Required):
+   - `ENCRYPTION_KEY` - A Fernet encryption key for secure token storage
+   
+   **How to generate**: See the "Configure Environment" section below.
+
+### OAuth Tokens (Automatically Generated)
+
+- `WITHINGS_ACCESS_TOKEN` and `WITHINGS_REFRESH_TOKEN` are **automatically obtained** through the OAuth flow when you visit `/auth/withings` endpoint. You don't need to provide these manually.
+
+### Optional Configuration
+
+- `DATABASE_URL` - Defaults to SQLite for local development
+- `BASE_URL` - Your application's public URL (important for OAuth callback)
+
 ## Features
 
 - OAuth2 flow for Withings authentication
