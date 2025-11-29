@@ -1,125 +1,179 @@
+"""
+Observations routes for Withings MCP
+Fetches health measurements from Withings API
+"""
+
 import logging
-from typing import List
-from fastapi import APIRouter, HTTPException
+from datetime import datetime, timedelta
+from typing import Optional
 import httpx
-from datetime import datetime, timedelta, timezone
-from src.schemas import WithingsObservation
-from src.config import get_settings
+from fastapi import APIRouter, HTTPException
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-# Withings API Base URL for measures
-WITHINGS_MEASURE_API_URL = "https://wbsapi.withings.net/measure"
+# Withings measurement types - comprehensive list
+MEASUREMENT_TYPES = {
+    1: {"name": "Weight", "unit": "kg", "convert_to_lbs": True},
+    4: {"name": "Height", "unit": "m"},
+    5: {"name": "Fat Free Mass", "unit": "kg", "convert_to_lbs": True},
+    6: {"name": "Fat Ratio", "unit": "%"},
+    8: {"name": "Fat Mass Weight", "unit": "kg", "convert_to_lbs": True},
+    9: {"name": "BMI", "unit": "kg/m²"},
+    10: {"name": "Muscle Mass", "unit": "kg", "convert_to_lbs": True},
+    11: {"name": "Hydration", "unit": "kg"},
+    12: {"name": "Heart Rate", "unit": "bpm"},
+    14: {"name": "Systolic Blood Pressure", "unit": "mmHg"},
+    15: {"name": "Diastolic Blood Pressure", "unit": "mmHg"},
+    16: {"name": "Steps", "unit": "count"},
+    17: {"name": "Distance", "unit": "m"},
+    19: {"name": "Sleep", "unit": "seconds"},
+    20: {"name": "Calories Burned", "unit": "kcal"},
+    21: {"name": "Active Time", "unit": "minutes"},
+    22: {"name": "Elevation", "unit": "m"},
+    44: {"name": "Sleep Duration", "unit": "seconds"},
+    45: {"name": "Sleep Quality", "unit": "%"},
+    54: {"name": "Bone Mass", "unit": "kg", "convert_to_lbs": True},
+    71: {"name": "Body Temperature", "unit": "°C"},
+    73: {"name": "Skin Temperature", "unit": "°C"},
+    74: {"name": "Heart Rate Variability", "unit": "ms"},
+    76: {"name": "VO2 Max", "unit": "ml/kg/min"},
+    77: {"name": "SpO2", "unit": "%"},
+    88: {"name": "Respiratory Rate", "unit": "breaths/min"},
+}
 
-@router.get("/observations", response_model=List[WithingsObservation])
-async def get_all_observations_for_user():
-    settings = get_settings()
-    access_token = settings.WITHINGS_ACCESS_TOKEN
+
+def convert_value(value: float, meastype: int) -> float:
+    """Convert measurement value if needed (e.g., kg to lbs)"""
+    if MEASUREMENT_TYPES[meastype].get("convert_to_lbs"):
+        return round(value * 2.20462, 2)
+    return round(value, 2)
+
+
+async def fetch_withings_data(
+    access_token: str,
+    meastype: int,
+    days_back: int = 7
+) -> Optional[list]:
+    """
+    Fetch measurement data from Withings API
     
-    if not access_token:
-        logger.error("WITHINGS_ACCESS_TOKEN not found in environment variables.")
-        raise HTTPException(status_code=401, detail="Withings access token not configured.")
-
-    # Define the types of measures we want to fetch and their FHIR codes
-    # Withings measure types: 1=Weight, 9=BMI, 12=Heart Rate
-    measure_type_map = {
-        1: {"code": "8302-2"},  # Weight (LOINC: Body weight)
-        9: {"code": "39156-5"}, # BMI (LOINC: Body mass index (BMI) [Ratio])
-        12: {"code": "8867-4"}  # Heart Rate (LOINC: Heart rate)
+    Args:
+        access_token: Withings API access token
+        meastype: Measurement type ID
+        days_back: Number of days to look back
+    
+    Returns:
+        List of measurements or None if error
+    """
+    start_date = int((datetime.now() - timedelta(days=days_back)).timestamp())
+    end_date = int(datetime.now().timestamp())
+    
+    payload = {
+        "action": "getmeas",
+        "meastype": meastype,
+        "startdate": start_date,
+        "enddate": end_date,
+        "lastupdate": 0,
     }
-
-    # Fetch data for the last 7 days to ensure recent data is available
-    end_timestamp = int(datetime.now(timezone.utc).timestamp())
-    start_timestamp = int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp())
     
-    all_withings_observations: List[WithingsObservation] = []
-
-    async with httpx.AsyncClient() as client:
-        for withings_meastype_id, fhir_info in measure_type_map.items():
-            params = {
-                "action": "getmeas",
-                "meastype": withings_meastype_id,
-                "category": 1, # Fetch real measures
-                "startdate": start_timestamp,
-                "enddate": end_timestamp,
-                "limit": 50 # Retrieve up to 50 recent measurements for each type
-            }
-            headers = {
-                "Authorization": f"Bearer {access_token}"
-            }
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://wbsapi.withings.net/measure",
+                data=payload,
+                headers=headers,
+                timeout=10.0
+            )
             
-            try:
-                response = await client.post(WITHINGS_MEASURE_API_URL, headers=headers, data=params)
-                response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
-                withings_data_json = response.json()
-
-                if withings_data_json.get("status") != 0:
-                    error_message = "Unknown Withings API error"
-                    if isinstance(withings_data_json.get("error"), dict):
-                        error_message = withings_data_json.get("error", {}).get("message", "Unknown Withings API error")
-                    elif isinstance(withings_data_json.get("error"), str):
-                        error_message = withings_data_json.get("error")
-                    
-                    logger.error(f"Withings API error for meastype {withings_meastype_id}: {error_message} (Status: {withings_data_json.get('status')})")
-                    # In a production system, you might want to handle specific errors like token expiry here
-                    continue
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == 0:
+                    return data.get("body", {}).get("measuregrps", [])
+                else:
+                    error_msg = data.get("error", "Unknown error")
+                    logger.error(f"Withings API error for meastype {meastype}: {error_msg}")
+                    return None
+            else:
+                error_text = response.text
+                logger.error(f"Withings API error for meastype {meastype}: {error_text} (Status: {response.status_code})")
+                return None
                 
-                measure_groups = withings_data_json["body"].get("measuregrps", [])
-                
-                for group in measure_groups:
-                    group_date_time = datetime.fromtimestamp(group["date"], timezone.utc)
-                    for measure in group["measures"]:
-                        # Ensure the measure type matches what we requested (in case Withings returns other types in a group)
-                        if measure["type"] == withings_meastype_id:
-                            # Withings often scales values by 10^unit (e.g., weight in kg * 10^-3 for grams)
-                            value = measure["value"] * (10**measure["unit"])
-                            
-                            observation_unit = ""
-                            if withings_meastype_id == 1: # Weight
-                                # Withings returns weight in kg; converting to lbs for consistency with previous mock data
-                                value = value * 2.20462 # 1 kg = 2.20462 lbs
-                                observation_unit = "lbs"
-                            elif withings_meastype_id == 9: # BMI
-                                # BMI is typically direct, unit is kg/m2
-                                observation_unit = "kg/m2"
-                            elif withings_meastype_id == 12: # Heart Rate
-                                # Heart Rate is typically direct, unit is bpm
-                                observation_unit = "bpm"
-                                
-                            all_withings_observations.append(
-                                WithingsObservation(
-                                    id=f"{fhir_info['code']}-{group_date_time.isoformat()}", # Generate a unique ID
-                                    code=fhir_info["code"],
-                                    value=round(value, 1), # Round value for cleaner output
-                                    unit=observation_unit,
-                                    effectiveDateTime=group_date_time.isoformat(timespec='seconds') + 'Z'
-                                )
-                            )
-            except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error fetching Withings data for meastype {withings_meastype_id}: {e} - Response: {e.response.text}")
-                raise HTTPException(status_code=e.response.status_code, detail=f"Withings API error: {e.response.text}")
-            except httpx.RequestError as e:
-                logger.error(f"Network error fetching Withings data for meastype {withings_meastype_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Network error communicating with Withings: {e}")
-            except Exception as e:
-                logger.error(f"Unexpected error processing Withings data for meastype {withings_meastype_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+    except Exception as e:
+        logger.error(f"Error fetching meastype {meastype}: {str(e)}")
+        return None
 
-        # Sort observations by date, most recent first
-    all_withings_observations.sort(key=lambda obs: obs.effectiveDateTime, reverse=True)
+
+def parse_measurements(measuregrps: list, meastype: int) -> list:
+    """
+    Parse measurement groups from Withings API response
     
-    return all_withings_observations
+    Args:
+        measuregrps: List of measurement groups from API
+        meastype: Measurement type ID
+    
+    Returns:
+        List of parsed measurements
+    """
+    measurements = []
+    
+    for group in measuregrps:
+        measures = group.get("measures", [])
+        for measure in measures:
+            if measure.get("type") == meastype:
+                value = measure.get("value", 0)
+                unit = measure.get("unit", 0)
+                
+                # Apply unit scaling (Withings uses unit field for decimal places)
+                if unit != 0:
+                    value = value * (10 ** unit)
+                
+                # Convert if needed
+                converted_value = convert_value(value, meastype)
+                
+                measurements.append({
+                    "type": meastype,
+                    "type_name": MEASUREMENT_TYPES[meastype]["name"],
+                    "value": converted_value,
+                    "unit": MEASUREMENT_TYPES[meastype]["unit"],
+                    "date": datetime.fromtimestamp(group.get("date", 0)).isoformat(),
+                })
+    
+    return measurements
 
 
-@router.get("/health_check")
-async def health_check():
+@router.get("/observations")
+async def get_observations(access_token: Optional[str] = None):
     """
-    Simple health check endpoint for the Withings MCP service.
-    Returns 200 OK if the service is running.
+    Get all health observations from Withings
+    Fetches comprehensive measurement data for the last 7 days
     """
-    return {
-        "status": "healthy",
-        "service": "Withings MCP for Health Information",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
+    import os
+    
+    token = access_token or os.getenv("WITHINGS_ACCESS_TOKEN")
+    if not token:
+        raise HTTPException(status_code=500, detail="Withings access token not configured")
+    
+    all_observations = []
+    
+    # Fetch all measurement types
+    for meastype in MEASUREMENT_TYPES.keys():
+        logger.info(f"Fetching measurement type {meastype}: {MEASUREMENT_TYPES[meastype]['name']}")
+        
+        measuregrps = await fetch_withings_data(token, meastype)
+        
+        if measuregrps:
+            measurements = parse_measurements(measuregrps, meastype)
+            all_observations.extend(measurements)
+            logger.info(f"Found {len(measurements)} measurements for type {meastype}")
+        else:
+            logger.warning(f"No data or error for measurement type {meastype}")
+    
+    # Sort by date descending
+    all_observations.sort(key=lambda x: x["date"], reverse=True)
+    
+    return all_observations
