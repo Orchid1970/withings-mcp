@@ -88,19 +88,33 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
                     measures = group.get("measures", [])
                     timestamp = group.get("date")
                     
+                    logger.debug(f"Processing group with {len(measures)} measures for type {meastype}")
+                    
                     for measure in measures:
-                        value = measure.get("value")
+                        raw_value = measure.get("value")
                         unit = measure.get("unit")
+                        
+                        logger.debug(f"Type {meastype}: raw_value={raw_value}, unit={unit}")
                         
                         # Handle unit scaling
                         if unit and unit < 0:
-                            value = value / (10 ** abs(unit))
+                            raw_value = raw_value / (10 ** abs(unit))
+                            logger.debug(f"Type {meastype}: After unit scaling: {raw_value}")
                         
                         # Convert weight from kg to lbs (type 1 is Weight)
-                        if meastype == 1 and value:
-                            value = value * 2.20462
-                            unit_label = "lbs"
+                        if meastype == 1:
+                            logger.info(f"WEIGHT CONVERSION: meastype={meastype}, raw_value={raw_value}, type(raw_value)={type(raw_value)}")
+                            if raw_value:
+                                converted_value = raw_value * 2.20462
+                                logger.info(f"WEIGHT CONVERTED: {raw_value} kg → {converted_value} lbs")
+                                value = converted_value
+                                unit_label = "lbs"
+                            else:
+                                logger.warning(f"WEIGHT: raw_value is falsy: {raw_value}")
+                                value = raw_value
+                                unit_label = "varies"
                         else:
+                            value = raw_value
                             unit_label = "varies"
                         
                         observation = {
