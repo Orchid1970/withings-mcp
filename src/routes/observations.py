@@ -1,200 +1,312 @@
 """
-Observations routes for Withings MCP
-Fetches health measurements from Withings API
+Observations route for fetching Withings health data
+Supports both V1 (metrics) and V2 (activity) endpoints
 """
 
 import logging
-import asyncio
+import os
 from datetime import datetime, timedelta
-from typing import Optional
-import httpx
 from fastapi import APIRouter, HTTPException
+import httpx
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Withings measurement types - comprehensive list
-MEASUREMENT_TYPES = {
-    1: {"name": "Weight", "unit": "kg", "convert_to_lbs": True},
-    4: {"name": "Height", "unit": "m"},
-    5: {"name": "Fat Free Mass", "unit": "kg", "convert_to_lbs": True},
-    6: {"name": "Fat Ratio", "unit": "%"},
-    8: {"name": "Fat Mass Weight", "unit": "kg", "convert_to_lbs": True},
-    9: {"name": "BMI", "unit": "kg/m²"},
-    10: {"name": "Muscle Mass", "unit": "kg", "convert_to_lbs": True},
-    11: {"name": "Hydration", "unit": "kg"},
-    12: {"name": "Heart Rate", "unit": "bpm"},
-    14: {"name": "Systolic Blood Pressure", "unit": "mmHg"},
-    15: {"name": "Diastolic Blood Pressure", "unit": "mmHg"},
-    16: {"name": "Steps", "unit": "count"},
-    17: {"name": "Distance", "unit": "m"},
-    20: {"name": "Calories Burned", "unit": "kcal"},
-    21: {"name": "Active Time", "unit": "minutes"},
-    22: {"name": "Elevation", "unit": "m"},
-    44: {"name": "Sleep Duration", "unit": "seconds"},
-    45: {"name": "Sleep Quality", "unit": "%"},
-    54: {"name": "Bone Mass", "unit": "kg", "convert_to_lbs": True},
-    71: {"name": "Body Temperature", "unit": "°C"},
-    73: {"name": "Skin Temperature", "unit": "°C"},
-    74: {"name": "Heart Rate Variability", "unit": "ms"},
-    76: {"name": "VO2 Max", "unit": "ml/kg/min"},
-    77: {"name": "SpO2", "unit": "%"},
-    88: {"name": "Respiratory Rate", "unit": "breaths/min"},
+# Withings API endpoints
+WITHINGS_MEASURE_V1 = "https://wbsapi.withings.net/measure"
+WITHINGS_MEASURE_V2 = "https://wbsapi.withings.net/v2/measure"
+
+# V1 Measurement types (metrics)
+MEASUREMENT_TYPES_V1 = {
+    1: "Weight",
+    4: "Height",
+    5: "Fat Free Mass",
+    6: "Fat Ratio",
+    8: "Fat Mass Weight",
+    9: "BMI",
+    10: "Muscle Mass",
+    11: "Hydration",
+    12: "Heart Rate",
+    14: "Systolic Blood Pressure",
+    15: "Diastolic Blood Pressure",
+    20: "Calories",
+    54: "Bone Mass",
+    71: "Body Temperature",
+    73: "Skin Temperature",
+    74: "Heart Rate Variability",
+    76: "VO2 Max",
+    77: "SpO2",
+    88: "Respiratory Rate"
 }
 
 
-def convert_value(value: float, meastype: int) -> float:
-    """Convert measurement value if needed (e.g., kg to lbs)"""
-    if MEASUREMENT_TYPES.get(meastype, {}).get("convert_to_lbs"):
-        return round(value * 2.20462, 2)
-    return round(value, 2)
+async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) -> list:
+    """
+    Fetch V1 metrics data (weight, body composition, vitals)
+    """
+    observations = []
+    
+    logger.info(f"Starting V1 metrics fetch with token: {access_token[:20]}...")
+    
+    async with httpx.AsyncClient() as client:
+        for meastype in MEASUREMENT_TYPES_V1.keys():
+            try:
+                logger.info(f"Fetching meastype {meastype} from Withings API (start: {start_date}, end: {end_date})")
+                
+                response = await client.post(
+                    WITHINGS_MEASURE_V1,
+                    data={
+                        "action": "getmeas",
+                        "meastypes": str(meastype),
+                        "category": 1,
+                        "startdate": start_date,
+                        "enddate": end_date,
+                        "access_token": access_token
+                    },
+                    timeout=10.0
+                )
+                
+                logger.info(f"Withings API response status: {response.status_code} for meastype {meastype}")
+                
+                if response.status_code != 200:
+                    logger.error(f"Failed to fetch meastype {meastype}: {response.text}")
+                    continue
+                
+                data = response.json()
+                
+                if data.get("status") != 0:
+                    logger.warning(f"Withings API error for meastype {meastype}: status={data.get('status')}, error={data.get('error')}")
+                    continue
+                
+                body = data.get("body", {})
+                measuregrps = body.get("measuregrps", [])
+                
+                logger.info(f"Type {meastype} ({MEASUREMENT_TYPES_V1[meastype]}): {len(measuregrps)} groups")
+                
+                for group in measuregrps:
+                    measures = group.get("measures", [])
+                    timestamp = group.get("date")
+                    
+                    for measure in measures:
+                        value = measure.get("value")
+                        unit = measure.get("unit")
+                        
+                        # Handle unit scaling
+                        if unit and unit < 0:
+                            value = value / (10 ** abs(unit))
+                        
+                        observation = {
+                            "type": meastype,
+                            "type_name": MEASUREMENT_TYPES_V1[meastype],
+                            "value": value,
+                            "unit": "varies",
+                            "date": datetime.fromtimestamp(timestamp).isoformat()
+                        }
+                        observations.append(observation)
+                
+                logger.info(f"Added {len(measures)} measurements for type {meastype}")
+            
+            except Exception as e:
+                logger.error(f"Error fetching meastype {meastype}: {str(e)}", exc_info=True)
+                continue
+    
+    return observations
 
 
-async def fetch_withings_data(
-    access_token: str,
-    meastype: int,
-    days_back: int = 7,
-    timeout: int = 5
-) -> Optional[list]:
+async def fetch_v2_activity(access_token: str, start_date: int, end_date: int) -> list:
     """
-    Fetch measurement data from Withings API
-    
-    Args:
-        access_token: Withings API access token
-        meastype: Measurement type ID
-        days_back: Number of days to look back
-        timeout: Request timeout in seconds
-    
-    Returns:
-        List of measurements or None if error
+    Fetch V2 activity data (steps, distance, active time, etc.)
     """
-    start_date = int((datetime.now() - timedelta(days=days_back)).timestamp())
-    end_date = int(datetime.now().timestamp())
+    observations = []
     
-    payload = {
-        "action": "getmeas",
-        "meastype": meastype,
-        "startdate": start_date,
-        "enddate": end_date,
-        "lastupdate": 0,
-    }
+    logger.info(f"Starting V2 activity fetch with token: {access_token[:20]}...")
     
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            logger.info(f"Fetching meastype {meastype} from Withings API (start: {start_date}, end: {end_date})")
+    async with httpx.AsyncClient() as client:
+        try:
+            logger.info(f"Fetching activity data from V2 endpoint (start: {start_date}, end: {end_date})")
             
             response = await client.post(
-                "https://wbsapi.withings.net/measure",
-                data=payload,
-                headers=headers,
-                timeout=float(timeout)
+                f"{WITHINGS_MEASURE_V2}/getactivity",
+                data={
+                    "startdateymd": datetime.fromtimestamp(start_date).strftime("%Y-%m-%d"),
+                    "enddateymd": datetime.fromtimestamp(end_date).strftime("%Y-%m-%d"),
+                    "access_token": access_token
+                },
+                timeout=10.0
             )
             
-            logger.info(f"Withings API response status: {response.status_code} for meastype {meastype}")
+            logger.info(f"Withings V2 API response status: {response.status_code}")
             
-            if response.status_code == 200:
-                data = response.json()
-                logger.debug(f"Withings API response body: {data}")
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch V2 activity: {response.text}")
+                return observations
+            
+            data = response.json()
+            
+            if data.get("status") != 0:
+                logger.warning(f"Withings V2 API error: status={data.get('status')}, error={data.get('error')}")
+                return observations
+            
+            body = data.get("body", {})
+            activities = body.get("activities", [])
+            
+            logger.info(f"V2 Activity: Retrieved {len(activities)} activity records")
+            
+            for activity in activities:
+                date = activity.get("date")
                 
-                if data.get("status") == 0:
-                    measuregrps = data.get("body", {}).get("measuregrps", [])
-                    logger.info(f"Type {meastype} ({MEASUREMENT_TYPES.get(meastype, {}).get('name', 'Unknown')}): {len(measuregrps)} groups")
-                    return measuregrps
-                else:
-                    error_msg = data.get("error", "Unknown error")
-                    logger.warning(f"Withings API error for meastype {meastype}: status={data.get('status')}, error={error_msg}")
-                    return None
-            else:
-                logger.warning(f"Withings API HTTP {response.status_code} for meastype {meastype}")
-                logger.warning(f"Response body: {response.text}")
-                return None
+                # Extract activity metrics
+                if activity.get("steps"):
+                    observations.append({
+                        "type": 16,
+                        "type_name": "Steps",
+                        "value": activity.get("steps"),
+                        "unit": "steps",
+                        "date": f"{date}T00:00:00"
+                    })
                 
-    except asyncio.TimeoutError:
-        logger.warning(f"Timeout fetching meastype {meastype}")
-        return None
-    except Exception as e:
-        logger.error(f"Error fetching meastype {meastype}: {str(e)}", exc_info=True)
-        return None
+                if activity.get("distance"):
+                    observations.append({
+                        "type": 17,
+                        "type_name": "Distance",
+                        "value": activity.get("distance"),
+                        "unit": "meters",
+                        "date": f"{date}T00:00:00"
+                    })
+                
+                if activity.get("duration"):
+                    observations.append({
+                        "type": 21,
+                        "type_name": "Active Duration",
+                        "value": activity.get("duration"),
+                        "unit": "seconds",
+                        "date": f"{date}T00:00:00"
+                    })
+                
+                if activity.get("calories"):
+                    observations.append({
+                        "type": 20,
+                        "type_name": "Calories",
+                        "value": activity.get("calories"),
+                        "unit": "kcal",
+                        "date": f"{date}T00:00:00"
+                    })
+                
+                if activity.get("elevation"):
+                    observations.append({
+                        "type": 22,
+                        "type_name": "Elevation",
+                        "value": activity.get("elevation"),
+                        "unit": "meters",
+                        "date": f"{date}T00:00:00"
+                    })
+            
+            logger.info(f"Added {len(observations)} activity observations from V2")
+        
+        except Exception as e:
+            logger.error(f"Error fetching V2 activity: {str(e)}", exc_info=True)
+    
+    return observations
 
 
-def parse_measurements(measuregrps: list, meastype: int) -> list:
+async def fetch_v2_intraday_activity(access_token: str, start_date: int, end_date: int) -> list:
     """
-    Parse measurement groups from Withings API response
-    
-    Args:
-        measuregrps: List of measurement groups from API
-        meastype: Measurement type ID
-    
-    Returns:
-        List of parsed measurements
+    Fetch V2 intraday activity data (hourly/minute-level steps, heart rate, etc.)
     """
-    measurements = []
+    observations = []
     
-    for group in measuregrps:
-        measures = group.get("measures", [])
-        for measure in measures:
-            if measure.get("type") == meastype:
-                value = measure.get("value", 0)
-                unit = measure.get("unit", 0)
-                
-                # Apply unit scaling (Withings uses unit field for decimal places)
-                if unit != 0:
-                    value = value * (10 ** unit)
-                
-                # Convert if needed
-                converted_value = convert_value(value, meastype)
-                
-                measurements.append({
-                    "type": meastype,
-                    "type_name": MEASUREMENT_TYPES.get(meastype, {}).get("name", "Unknown"),
-                    "value": converted_value,
-                    "unit": MEASUREMENT_TYPES.get(meastype, {}).get("unit", ""),
-                    "date": datetime.fromtimestamp(group.get("date", 0)).isoformat(),
-                })
+    logger.info(f"Starting V2 intraday activity fetch with token: {access_token[:20]}...")
     
-    return measurements
+    async with httpx.AsyncClient() as client:
+        try:
+            logger.info(f"Fetching intraday activity data from V2 endpoint (start: {start_date}, end: {end_date})")
+            
+            response = await client.post(
+                f"{WITHINGS_MEASURE_V2}/getintradayactivity",
+                data={
+                    "startdate": start_date,
+                    "enddate": end_date,
+                    "access_token": access_token
+                },
+                timeout=10.0
+            )
+            
+            logger.info(f"Withings V2 intraday API response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch V2 intraday activity: {response.text}")
+                return observations
+            
+            data = response.json()
+            
+            if data.get("status") != 0:
+                logger.warning(f"Withings V2 intraday API error: status={data.get('status')}, error={data.get('error')}")
+                return observations
+            
+            body = data.get("body", {})
+            series = body.get("series", {})
+            
+            logger.info(f"V2 Intraday Activity: Retrieved {len(series)} intraday records")
+            
+            for timestamp_str, metrics in series.items():
+                timestamp = int(timestamp_str)
+                date_str = datetime.fromtimestamp(timestamp).isoformat()
+                
+                if metrics.get("steps"):
+                    observations.append({
+                        "type": 16,
+                        "type_name": "Steps (Intraday)",
+                        "value": metrics.get("steps"),
+                        "unit": "steps",
+                        "date": date_str
+                    })
+                
+                if metrics.get("heart_rate"):
+                    observations.append({
+                        "type": 12,
+                        "type_name": "Heart Rate (Intraday)",
+                        "value": metrics.get("heart_rate"),
+                        "unit": "bpm",
+                        "date": date_str
+                    })
+            
+            logger.info(f"Added {len(observations)} intraday observations from V2")
+        
+        except Exception as e:
+            logger.error(f"Error fetching V2 intraday activity: {str(e)}", exc_info=True)
+    
+    return observations
 
 
 @router.get("/observations")
-async def get_observations(access_token: Optional[str] = None):
+async def get_observations():
     """
-    Get all health observations from Withings
-    Fetches comprehensive measurement data for the last 7 days
+    Fetch all health observations from both V1 and V2 endpoints
+    Returns combined metrics and activity data
     """
-    import os
+    access_token = os.getenv("WITHINGS_ACCESS_TOKEN")
     
-    token = access_token or os.getenv("WITHINGS_ACCESS_TOKEN")
-    if not token:
-        logger.error("Withings access token not configured")
-        raise HTTPException(status_code=500, detail="Withings access token not configured")
+    if not access_token:
+        logger.error("WITHINGS_ACCESS_TOKEN not configured")
+        raise HTTPException(status_code=500, detail="Access token not configured")
     
-    logger.info(f"Starting observations fetch with token: {token[:20]}...")
+    # Calculate date range (last 7 days)
+    end_date = int(datetime.now().timestamp())
+    start_date = int((datetime.now() - timedelta(days=7)).timestamp())
     
-    all_observations = []
+    try:
+        # Fetch from both V1 and V2 endpoints
+        v1_observations = await fetch_v1_metrics(access_token, start_date, end_date)
+        v2_daily_observations = await fetch_v2_activity(access_token, start_date, end_date)
+        v2_intraday_observations = await fetch_v2_intraday_activity(access_token, start_date, end_date)
+        
+        # Combine all observations
+        all_observations = v1_observations + v2_daily_observations + v2_intraday_observations
+        
+        logger.info(f"Returning {len(all_observations)} total observations")
+        
+        return all_observations
     
-    # Fetch measurement types sequentially with timeout protection
-    for meastype in sorted(MEASUREMENT_TYPES.keys()):
-        try:
-            measuregrps = await fetch_withings_data(token, meastype, timeout=5)
-            
-            if measuregrps:
-                measurements = parse_measurements(measuregrps, meastype)
-                all_observations.extend(measurements)
-                logger.info(f"Added {len(measurements)} measurements for type {meastype}")
-            
-            # Small delay between requests to avoid rate limiting
-            await asyncio.sleep(0.2)
-            
-        except Exception as e:
-            logger.error(f"Unexpected error processing meastype {meastype}: {str(e)}", exc_info=True)
-            continue
-    
-    # Sort by date descending
-    all_observations.sort(key=lambda x: x["date"], reverse=True)
-    
-    logger.info(f"Returning {len(all_observations)} total observations")
-    return all_observations
+    except Exception as e:
+        logger.error(f"Error fetching observations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error fetching observations: {str(e)}")
