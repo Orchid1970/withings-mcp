@@ -88,18 +88,36 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
                     timestamp = group.get("date")
                     
                     for measure in measures:
-                        value = measure.get("value")
+                        raw_value = measure.get("value")
                         unit = measure.get("unit")
                         
                         # Handle unit scaling
+                        scaled_value = raw_value
                         if unit and unit < 0:
-                            value = value / (10 ** abs(unit))
+                            scaled_value = raw_value / (10 ** abs(unit))
+                            logger.debug(f"Type {meastype}: Applied unit scaling (unit={unit}): {raw_value} → {scaled_value}")
+                        
+                        # Determine final value and unit label
+                        final_value = scaled_value
+                        unit_label = "varies"
+                        
+                        # Convert weight from kg to lbs (type 1 is Weight)
+                        if meastype == 1:
+                            logger.info(f"WEIGHT CONVERSION: raw_value={raw_value}, unit={unit}, scaled_value={scaled_value}")
+                            if scaled_value is not None and scaled_value != 0:
+                                # Withings weight is in kg, convert to lbs
+                                final_value = float(scaled_value) * 2.20462
+                                unit_label = "lbs"
+                                logger.info(f"WEIGHT CONVERTED: {scaled_value} kg → {final_value} lbs")
+                            else:
+                                logger.warning(f"WEIGHT: scaled_value is None or zero: {scaled_value}")
+                                unit_label = "kg"
                         
                         observation = {
                             "type": meastype,
                             "type_name": MEASUREMENT_TYPES_V1[meastype],
-                            "value": value,
-                            "unit": "varies",
+                            "value": final_value,
+                            "unit": unit_label,
                             "date": datetime.fromtimestamp(timestamp).isoformat()
                         }
                         observations.append(observation)
@@ -209,7 +227,3 @@ async def get_observations(days: int = 7):
             "count": len(all_observations),
             "observations": all_observations
         }
-    
-    except Exception as e:
-        logger.error(f"Error in get_observations: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
