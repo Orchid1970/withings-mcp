@@ -83,52 +83,45 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
                 
                 logger.info(f"Type {meastype} ({MEASUREMENT_TYPES_V1[meastype]}): {len(measuregrps)} groups")
                 
-                type_count = 0
-                for group_idx, group in enumerate(measuregrps):
+                for group in measuregrps:
                     measures = group.get("measures", [])
                     timestamp = group.get("date")
                     
-                    logger.debug(f"Group {group_idx}: {len(measures)} measures for type {meastype}")
-                    
-                    for measure_idx, measure in enumerate(measures):
+                    for measure in measures:
                         raw_value = measure.get("value")
                         unit = measure.get("unit")
                         
-                        logger.debug(f"  Measure {measure_idx}: raw_value={raw_value}, unit={unit}")
-                        
                         # Handle unit scaling
+                        scaled_value = raw_value
                         if unit and unit < 0:
-                            raw_value = raw_value / (10 ** abs(unit))
-                            logger.debug(f"  After unit scaling: {raw_value}")
+                            scaled_value = raw_value / (10 ** abs(unit))
+                        
+                        # Determine final value and unit label
+                        final_value = scaled_value
+                        unit_label = "varies"
                         
                         # Convert weight from kg to lbs (type 1 is Weight)
                         if meastype == 1:
-                            logger.info(f"WEIGHT CONVERSION: meastype={meastype}, raw_value={raw_value}, type={type(raw_value).__name__}")
-                            if raw_value is not None and raw_value != 0:
-                                converted_value = float(raw_value) * 2.20462
-                                logger.info(f"WEIGHT CONVERTED: {raw_value} kg → {converted_value} lbs")
-                                value = converted_value
+                            logger.info(f"WEIGHT CONVERSION: raw_value={raw_value}, unit={unit}, scaled_value={scaled_value}")
+                            if scaled_value is not None and scaled_value != 0:
+                                # Withings weight is in kg, convert to lbs
+                                final_value = float(scaled_value) * 2.20462
                                 unit_label = "lbs"
+                                logger.info(f"WEIGHT CONVERTED: {scaled_value} kg → {final_value} lbs")
                             else:
-                                logger.warning(f"WEIGHT: raw_value is None or zero: {raw_value}")
-                                value = raw_value
+                                logger.warning(f"WEIGHT: scaled_value is None or zero: {scaled_value}")
                                 unit_label = "kg"
-                        else:
-                            value = raw_value
-                            unit_label = "varies"
                         
                         observation = {
                             "type": meastype,
                             "type_name": MEASUREMENT_TYPES_V1[meastype],
-                            "value": value,
+                            "value": final_value,
                             "unit": unit_label,
                             "date": datetime.fromtimestamp(timestamp).isoformat()
                         }
                         observations.append(observation)
-                        type_count += 1
-                        logger.debug(f"  Added observation #{type_count} for type {meastype}")
                 
-                logger.info(f"✓ Type {meastype}: Added {type_count} total measurements")
+                logger.info(f"Added {len(measures)} measurements for type {meastype}")
             
             except Exception as e:
                 logger.error(f"Error fetching meastype {meastype}: {str(e)}", exc_info=True)
@@ -137,10 +130,12 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
     return observations
 
 
-async def fetch_v2_activity(access_token: str, start_date: int, end_date: int) -> list:
+async def fetch_v2_activity(access_token: str, start_date: int, end_date: int, userid: str = None) -> list:
     """
     Fetch V2 activity data using correct Measure v2 endpoint
     Supports: steps, distance, active duration, calories, heart rate
+    
+    Note: userid is optional but recommended for better results
     """
     observations = []
     
@@ -148,20 +143,29 @@ async def fetch_v2_activity(access_token: str, start_date: int, end_date: int) -
     
     async with httpx.AsyncClient() as client:
         try:
-            logger.info(f"Fetching V2 activity data (start: {start_date}, end: {end_date})")
+            logger.info(f"Fetching V2 activity data (start: {start_date}, end: {end_date}, userid: {userid})")
+            
+            # Build request data
+            request_data = {
+                "action": "getactivity",
+                "startdate": start_date,
+                "enddate": end_date,
+                "access_token": access_token
+            }
+            
+            # Add userid if provided
+            if userid:
+                request_data["userid"] = userid
+                logger.info(f"V2 Activity: Including userid={userid}")
             
             response = await client.post(
                 WITHINGS_MEASURE_V2,
-                data={
-                    "action": "getactivity",
-                    "startdate": start_date,
-                    "enddate": end_date,
-                    "access_token": access_token
-                },
+                data=request_data,
                 timeout=10.0
             )
             
             logger.info(f"Withings V2 API response status: {response.status_code}")
+            logger.debug(f"V2 Response body: {response.text[:500]}")
             
             if response.status_code != 200:
                 logger.error(f"Failed to fetch V2 activity: {response.text}")
@@ -176,7 +180,7 @@ async def fetch_v2_activity(access_token: str, start_date: int, end_date: int) -
             body = data.get("body", {})
             activities = body.get("activities", [])
             
-            logger.info(f"V2 Activity: {len(activities)} activity records")
+            logger.info(f"V2 Activity: {len(activities)} activity records retrieved")
             
             for activity in activities:
                 timestamp = activity.get("date")
@@ -202,17 +206,24 @@ async def fetch_v2_activity(access_token: str, start_date: int, end_date: int) -
 
 
 @router.get("/observations")
-async def get_observations(days: int = 7):
+async def get_observations(days: int = 7, userid: str = None):
     """
     Get health observations from Withings
     Query parameters:
     - days: number of days to fetch (default: 7)
+    - userid: optional Withings user ID for activity data (default: None)
     """
     try:
         access_token = os.getenv("WITHINGS_ACCESS_TOKEN")
         if not access_token:
             logger.error("WITHINGS_ACCESS_TOKEN not set")
             raise HTTPException(status_code=500, detail="Withings token not configured")
+        
+        # Get userid from environment if not provided as parameter
+        if not userid:
+            userid = os.getenv("WITHINGS_USER_ID")
+            if userid:
+                logger.info(f"Using WITHINGS_USER_ID from environment: {userid}")
         
         # Calculate date range
         end_date = int(datetime.utcnow().timestamp())
@@ -222,7 +233,7 @@ async def get_observations(days: int = 7):
         
         # Fetch both V1 and V2 data
         v1_data = await fetch_v1_metrics(access_token, start_date, end_date)
-        v2_data = await fetch_v2_activity(access_token, start_date, end_date)
+        v2_data = await fetch_v2_activity(access_token, start_date, end_date, userid)
         
         all_observations = v1_data + v2_data
         
