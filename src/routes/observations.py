@@ -95,7 +95,6 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
                         scaled_value = raw_value
                         if unit and unit < 0:
                             scaled_value = raw_value / (10 ** abs(unit))
-                            logger.debug(f"Type {meastype}: Applied unit scaling (unit={unit}): {raw_value} → {scaled_value}")
                         
                         # Determine final value and unit label
                         final_value = scaled_value
@@ -227,3 +226,7 @@ async def get_observations(days: int = 7):
             "count": len(all_observations),
             "observations": all_observations
         }
+    
+    except Exception as e:
+        logger.error(f"Error in get_observations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
