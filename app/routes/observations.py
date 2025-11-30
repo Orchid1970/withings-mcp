@@ -84,35 +84,35 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
                 logger.info(f"Type {meastype} ({MEASUREMENT_TYPES_V1[meastype]}): {len(measuregrps)} groups")
                 
                 type_count = 0
-                for group in measuregrps:
+                for group_idx, group in enumerate(measuregrps):
                     measures = group.get("measures", [])
                     timestamp = group.get("date")
                     
-                    logger.debug(f"Processing group with {len(measures)} measures for type {meastype}")
+                    logger.debug(f"Group {group_idx}: {len(measures)} measures for type {meastype}")
                     
-                    for measure in measures:
+                    for measure_idx, measure in enumerate(measures):
                         raw_value = measure.get("value")
                         unit = measure.get("unit")
                         
-                        logger.debug(f"Type {meastype}: raw_value={raw_value}, unit={unit}")
+                        logger.debug(f"  Measure {measure_idx}: raw_value={raw_value}, unit={unit}")
                         
                         # Handle unit scaling
                         if unit and unit < 0:
                             raw_value = raw_value / (10 ** abs(unit))
-                            logger.debug(f"Type {meastype}: After unit scaling: {raw_value}")
+                            logger.debug(f"  After unit scaling: {raw_value}")
                         
                         # Convert weight from kg to lbs (type 1 is Weight)
                         if meastype == 1:
-                            logger.info(f"WEIGHT CONVERSION: meastype={meastype}, raw_value={raw_value}, type(raw_value)={type(raw_value)}")
-                            if raw_value:
-                                converted_value = raw_value * 2.20462
+                            logger.info(f"WEIGHT CONVERSION: meastype={meastype}, raw_value={raw_value}, type={type(raw_value).__name__}")
+                            if raw_value is not None and raw_value != 0:
+                                converted_value = float(raw_value) * 2.20462
                                 logger.info(f"WEIGHT CONVERTED: {raw_value} kg → {converted_value} lbs")
                                 value = converted_value
                                 unit_label = "lbs"
                             else:
-                                logger.warning(f"WEIGHT: raw_value is falsy: {raw_value}")
+                                logger.warning(f"WEIGHT: raw_value is None or zero: {raw_value}")
                                 value = raw_value
-                                unit_label = "varies"
+                                unit_label = "kg"
                         else:
                             value = raw_value
                             unit_label = "varies"
@@ -126,8 +126,9 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
                         }
                         observations.append(observation)
                         type_count += 1
+                        logger.debug(f"  Added observation #{type_count} for type {meastype}")
                 
-                logger.info(f"Added {type_count} measurements for type {meastype}")
+                logger.info(f"✓ Type {meastype}: Added {type_count} total measurements")
             
             except Exception as e:
                 logger.error(f"Error fetching meastype {meastype}: {str(e)}", exc_info=True)
