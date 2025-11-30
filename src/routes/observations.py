@@ -85,6 +85,8 @@ async def fetch_withings_data(
     
     try:
         async with httpx.AsyncClient() as client:
+            logger.info(f"Fetching meastype {meastype} from Withings API (start: {start_date}, end: {end_date})")
+            
             response = await client.post(
                 "https://wbsapi.withings.net/measure",
                 data=payload,
@@ -92,25 +94,30 @@ async def fetch_withings_data(
                 timeout=float(timeout)
             )
             
+            logger.info(f"Withings API response status: {response.status_code} for meastype {meastype}")
+            
             if response.status_code == 200:
                 data = response.json()
+                logger.debug(f"Withings API response body: {data}")
+                
                 if data.get("status") == 0:
                     measuregrps = data.get("body", {}).get("measuregrps", [])
                     logger.info(f"Type {meastype} ({MEASUREMENT_TYPES.get(meastype, {}).get('name', 'Unknown')}): {len(measuregrps)} groups")
                     return measuregrps
                 else:
                     error_msg = data.get("error", "Unknown error")
-                    logger.warning(f"Withings API error for meastype {meastype}: {error_msg}")
+                    logger.warning(f"Withings API error for meastype {meastype}: status={data.get('status')}, error={error_msg}")
                     return None
             else:
                 logger.warning(f"Withings API HTTP {response.status_code} for meastype {meastype}")
+                logger.warning(f"Response body: {response.text}")
                 return None
                 
     except asyncio.TimeoutError:
         logger.warning(f"Timeout fetching meastype {meastype}")
         return None
     except Exception as e:
-        logger.warning(f"Error fetching meastype {meastype}: {str(e)}")
+        logger.error(f"Error fetching meastype {meastype}: {str(e)}", exc_info=True)
         return None
 
 
@@ -162,7 +169,10 @@ async def get_observations(access_token: Optional[str] = None):
     
     token = access_token or os.getenv("WITHINGS_ACCESS_TOKEN")
     if not token:
+        logger.error("Withings access token not configured")
         raise HTTPException(status_code=500, detail="Withings access token not configured")
+    
+    logger.info(f"Starting observations fetch with token: {token[:20]}...")
     
     all_observations = []
     
@@ -174,12 +184,13 @@ async def get_observations(access_token: Optional[str] = None):
             if measuregrps:
                 measurements = parse_measurements(measuregrps, meastype)
                 all_observations.extend(measurements)
+                logger.info(f"Added {len(measurements)} measurements for type {meastype}")
             
             # Small delay between requests to avoid rate limiting
             await asyncio.sleep(0.2)
             
         except Exception as e:
-            logger.error(f"Unexpected error processing meastype {meastype}: {str(e)}")
+            logger.error(f"Unexpected error processing meastype {meastype}: {str(e)}", exc_info=True)
             continue
     
     # Sort by date descending
