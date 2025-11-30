@@ -4,6 +4,7 @@ Fetches health measurements from Withings API
 """
 
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 import httpx
@@ -27,7 +28,6 @@ MEASUREMENT_TYPES = {
     15: {"name": "Diastolic Blood Pressure", "unit": "mmHg"},
     16: {"name": "Steps", "unit": "count"},
     17: {"name": "Distance", "unit": "m"},
-    19: {"name": "Sleep", "unit": "seconds"},
     20: {"name": "Calories Burned", "unit": "kcal"},
     21: {"name": "Active Time", "unit": "minutes"},
     22: {"name": "Elevation", "unit": "m"},
@@ -45,7 +45,7 @@ MEASUREMENT_TYPES = {
 
 def convert_value(value: float, meastype: int) -> float:
     """Convert measurement value if needed (e.g., kg to lbs)"""
-    if MEASUREMENT_TYPES[meastype].get("convert_to_lbs"):
+    if MEASUREMENT_TYPES.get(meastype, {}).get("convert_to_lbs"):
         return round(value * 2.20462, 2)
     return round(value, 2)
 
@@ -53,7 +53,8 @@ def convert_value(value: float, meastype: int) -> float:
 async def fetch_withings_data(
     access_token: str,
     meastype: int,
-    days_back: int = 7
+    days_back: int = 7,
+    timeout: int = 5
 ) -> Optional[list]:
     """
     Fetch measurement data from Withings API
@@ -62,6 +63,7 @@ async def fetch_withings_data(
         access_token: Withings API access token
         meastype: Measurement type ID
         days_back: Number of days to look back
+        timeout: Request timeout in seconds
     
     Returns:
         List of measurements or None if error
@@ -87,24 +89,28 @@ async def fetch_withings_data(
                 "https://wbsapi.withings.net/measure",
                 data=payload,
                 headers=headers,
-                timeout=10.0
+                timeout=float(timeout)
             )
             
             if response.status_code == 200:
                 data = response.json()
                 if data.get("status") == 0:
-                    return data.get("body", {}).get("measuregrps", [])
+                    measuregrps = data.get("body", {}).get("measuregrps", [])
+                    logger.info(f"Type {meastype} ({MEASUREMENT_TYPES.get(meastype, {}).get('name', 'Unknown')}): {len(measuregrps)} groups")
+                    return measuregrps
                 else:
                     error_msg = data.get("error", "Unknown error")
-                    logger.error(f"Withings API error for meastype {meastype}: {error_msg}")
+                    logger.warning(f"Withings API error for meastype {meastype}: {error_msg}")
                     return None
             else:
-                error_text = response.text
-                logger.error(f"Withings API error for meastype {meastype}: {error_text} (Status: {response.status_code})")
+                logger.warning(f"Withings API HTTP {response.status_code} for meastype {meastype}")
                 return None
                 
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout fetching meastype {meastype}")
+        return None
     except Exception as e:
-        logger.error(f"Error fetching meastype {meastype}: {str(e)}")
+        logger.warning(f"Error fetching meastype {meastype}: {str(e)}")
         return None
 
 
@@ -137,9 +143,9 @@ def parse_measurements(measuregrps: list, meastype: int) -> list:
                 
                 measurements.append({
                     "type": meastype,
-                    "type_name": MEASUREMENT_TYPES[meastype]["name"],
+                    "type_name": MEASUREMENT_TYPES.get(meastype, {}).get("name", "Unknown"),
                     "value": converted_value,
-                    "unit": MEASUREMENT_TYPES[meastype]["unit"],
+                    "unit": MEASUREMENT_TYPES.get(meastype, {}).get("unit", ""),
                     "date": datetime.fromtimestamp(group.get("date", 0)).isoformat(),
                 })
     
@@ -160,20 +166,24 @@ async def get_observations(access_token: Optional[str] = None):
     
     all_observations = []
     
-    # Fetch all measurement types
-    for meastype in MEASUREMENT_TYPES.keys():
-        logger.info(f"Fetching measurement type {meastype}: {MEASUREMENT_TYPES[meastype]['name']}")
-        
-        measuregrps = await fetch_withings_data(token, meastype)
-        
-        if measuregrps:
-            measurements = parse_measurements(measuregrps, meastype)
-            all_observations.extend(measurements)
-            logger.info(f"Found {len(measurements)} measurements for type {meastype}")
-        else:
-            logger.warning(f"No data or error for measurement type {meastype}")
+    # Fetch measurement types sequentially with timeout protection
+    for meastype in sorted(MEASUREMENT_TYPES.keys()):
+        try:
+            measuregrps = await fetch_withings_data(token, meastype, timeout=5)
+            
+            if measuregrps:
+                measurements = parse_measurements(measuregrps, meastype)
+                all_observations.extend(measurements)
+            
+            # Small delay between requests to avoid rate limiting
+            await asyncio.sleep(0.2)
+            
+        except Exception as e:
+            logger.error(f"Unexpected error processing meastype {meastype}: {str(e)}")
+            continue
     
     # Sort by date descending
     all_observations.sort(key=lambda x: x["date"], reverse=True)
     
+    logger.info(f"Returning {len(all_observations)} total observations")
     return all_observations
