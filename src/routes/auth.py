@@ -13,7 +13,7 @@ from src.config import get_settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 WITHINGS_AUTH = "https://account.withings.com/oauth2_user/authorize2"
-WITHINGS_TOKEN = "https://wbsapi.withings.net/v2/oauth2"
+WITHINGS_TOKEN = "https://account.withings.com/oauth2/token"
 
 @router.get("/withings")
 async def initiate_oauth():
