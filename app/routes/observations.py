@@ -83,6 +83,7 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
                 
                 logger.info(f"Type {meastype} ({MEASUREMENT_TYPES_V1[meastype]}): {len(measuregrps)} groups")
                 
+                type_count = 0
                 for group in measuregrps:
                     measures = group.get("measures", [])
                     timestamp = group.get("date")
@@ -110,8 +111,9 @@ async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) ->
                             "date": datetime.fromtimestamp(timestamp).isoformat()
                         }
                         observations.append(observation)
+                        type_count += 1
                 
-                logger.info(f"Added {len(measures)} measurements for type {meastype}")
+                logger.info(f"Added {type_count} measurements for type {meastype}")
             
             except Exception as e:
                 logger.error(f"Error fetching meastype {meastype}: {str(e)}", exc_info=True)
