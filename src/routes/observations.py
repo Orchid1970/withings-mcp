@@ -122,4 +122,4 @@ async def fetch_v2_activity(access_token: str, start_date: int, end_date: int) -
     
     logger.info(f"Starting V2 activity fetch with token: {access_token[:20]}...")
     
-    async with httpx.AsyncClient
+    async with httpx.AsyncClient() as client:
