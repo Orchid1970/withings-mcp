@@ -6,11 +6,9 @@ Supports both V1 (metrics) and V2 (activity) endpoints
 import logging
 import os
 from datetime import datetime, timedelta
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import httpx
-from fastapi import Depends
 from src.clients.withings_client import WithingsClient
-from app.dependencies import get_withings_access_token  # or your equivalent token resolver
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -41,6 +39,17 @@ MEASUREMENT_TYPES_V1 = {
     77: "SpO2",
     88: "Respiratory Rate"
 }
+
+
+# -------------------------------------------------------------------------
+# Dependency function
+# -------------------------------------------------------------------------
+async def get_withings_access_token() -> str:
+    """Dependency to get Withings access token from environment."""
+    token = os.getenv("WITHINGS_ACCESS_TOKEN")
+    if not token:
+        raise HTTPException(status_code=500, detail="Withings token not configured")
+    return token
 
 
 async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) -> list:
