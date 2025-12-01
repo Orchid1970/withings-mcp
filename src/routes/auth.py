@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 import httpx
+import os
 # from sqlalchemy.ext.asyncio import AsyncSession # Comment out for now
 # from sqlalchemy import select # Comment out for now
 # from src.database import get_db # Comment out for now
@@ -13,7 +14,7 @@ from src.config import get_settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 WITHINGS_AUTH = "https://account.withings.com/oauth2_user/authorize2"
-WITHINGS_TOKEN = "https://account.withings.com/oauth2/token"
+WITHINGS_TOKEN = os.getenv("WITHINGS_TOKEN_URL", "https://wbsapi.withings.net/v2/oauth2")
 
 @router.get("/withings")
 async def initiate_oauth():
