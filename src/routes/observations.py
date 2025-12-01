@@ -229,10 +229,15 @@ async def get_observations(days: int = 7):
             "count": len(all_observations),
             "observations": all_observations
         }
+    
+    except Exception as e:
+        logger.error(f"Error in get_observations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # ---------------------------------------------------------------------
+
+# -------------------------------------------------------------------------
 # NEW: Daily activity (steps, distance, calories)
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------------
 @router.get("/withings/activity/daily")
 async def get_withings_daily_activity(
     start: str,
@@ -251,9 +256,9 @@ async def get_withings_daily_activity(
     return {"activities": activities}
 
 
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # NEW: Sleep summary (per-night aggregated metrics)
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------------
 @router.get("/withings/sleep/summary")
 async def get_withings_sleep_summary(
     start: str,
@@ -272,9 +277,9 @@ async def get_withings_sleep_summary(
     return {"series": summary}
 
 
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # NEW: Sleep events (raw timelines)
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------------
 @router.get("/withings/sleep/events")
 async def get_withings_sleep_events(
     start_ts: int,
@@ -296,8 +301,4 @@ async def get_withings_sleep_events(
     except Exception as exc:
         logger.exception("Withings sleep events fetch failed")
         raise HTTPException(status_code=502, detail=f"Withings sleep events fetch failed: {exc}")
-    return {"events": events}    
-
-except Exception as e:
-        logger.error(f"Error in get_observations: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"events": events}
