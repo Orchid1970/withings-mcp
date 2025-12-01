@@ -1,7 +1,9 @@
 import httpx
+import logging
 from typing import Any, Dict, List, Optional
 
 WITHINGS_API_BASE = "https://wbsapi.withings.net"
+logger = logging.getLogger(__name__)
 
 
 class WithingsAPIError(RuntimeError):
@@ -162,3 +164,18 @@ class WithingsClient:
             },
         )
         return body.get("series", [])
+
+
+# -------------------------------------------------------------------------
+# Scheduler function (called by APScheduler every 120 minutes)
+# -------------------------------------------------------------------------
+async def sync_all_users() -> None:
+    """
+    Placeholder for syncing all users' Withings data.
+    In production, this would iterate over all users in your database
+    and call the Withings API for each one.
+    """
+    logger.info("sync_all_users() called - syncing Withings data for all users")
+    # TODO: Implement multi-user sync logic here
+    # For now, this is a no-op that prevents the scheduler from crashing
+    pass
