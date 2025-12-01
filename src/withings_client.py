@@ -1,94 +1,164 @@
-import logging
 import httpx
-from datetime import datetime, timedelta
-from sqlalchemy import select
-from src.database import async_session
-from src.models import TokenRecord, Observation
-from src.encryption import decrypt_token, encrypt_token
-from src.config import get_settings
-from src.fhir_mappings import WITHINGS_TO_FHIR
+from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-WITHINGS_API = "https://wbsapi.withings.net"
+WITHINGS_API_BASE = "https://wbsapi.withings.net"
 
-async def refresh_token_if_needed(token: TokenRecord) -> TokenRecord:
-    if token.expires_at > datetime.utcnow() + timedelta(minutes=5):
-        return token
-    
-    settings = get_settings()
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(f"{WITHINGS_API}/v2/oauth2", data={
-            "action": "requesttoken",
-            "grant_type": "refresh_token",
-            "client_id": settings.WITHINGS_CLIENT_ID,
-            "client_secret": settings.WITHINGS_CLIENT_SECRET,
-            "refresh_token": decrypt_token(token.refresh_token_encrypted)
-        })
-        data = resp.json()["body"]
-        
-        token.access_token_encrypted = encrypt_token(data["access_token"])
-        token.refresh_token_encrypted = encrypt_token(data["refresh_token"])
-        token.expires_at = datetime.utcnow() + timedelta(seconds=data["expires_in"])
-        logger.info(f"Refreshed token for user {token.user_id}")
-        return token
 
-async def fetch_measurements(token: TokenRecord) -> list[dict]:
-    token = await refresh_token_if_needed(token)
-    access_token = decrypt_token(token.access_token_encrypted)
-    
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(f"{WITHINGS_API}/measure", data={
-            "action": "getmeas",
-            "access_token": access_token,
-            "startdate": int((datetime.utcnow() - timedelta(days=30)).timestamp()),
-            "enddate": int(datetime.utcnow().timestamp())
-        })
-        return resp.json().get("body", {}).get("measuregrps", [])
+class WithingsAPIError(RuntimeError):
+    """Raised when the Withings API responds with a non-zero status."""
 
-def convert_to_fhir(user_id: str, measuregrps: list[dict]) -> list[Observation]:
-    observations = []
-    for grp in measuregrps:
-        grp_date = datetime.fromtimestamp(grp["date"])
-        for measure in grp.get("measures", []):
-            mtype = measure["type"]
-            if mtype not in WITHINGS_TO_FHIR:
-                continue
-            
-            fhir = WITHINGS_TO_FHIR[mtype]
-            value = measure["value"] * (10 ** measure["unit"])
-            
-            obs = Observation(
-                user_id=user_id,
-                code_system="http://loinc.org",
-                code_value=fhir["loinc"],
-                code_display=fhir["display"],
-                value_quantity=value,
-                value_unit=fhir["unit"],
-                effective_datetime=grp_date,
-                withings_type=mtype
+
+class WithingsClient:
+    """
+    Lightweight Withings API client supporting measurement, activity, and sleep endpoints.
+    Requires an OAuth access token that already has scopes:
+      - user.metrics
+      - user.activity
+      - user.sleepevents
+    """
+
+    def __init__(self, access_token: str, timeout: float = 30.0) -> None:
+        self.access_token = access_token
+        self._client = httpx.Client(timeout=timeout)
+
+    # -------------------------------------------------------------------------
+    # Internal helpers
+    # -------------------------------------------------------------------------
+    def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        POST helper that injects the access token, parses the response, and
+        raises WithingsAPIError if the API returns a non-zero status.
+        """
+        data = {
+            "access_token": self.access_token,
+            **payload,
+        }
+        response = self._client.post(f"{WITHINGS_API_BASE}{path}", data=data)
+        response.raise_for_status()
+        body = response.json()
+        if body.get("status") != 0:
+            raise WithingsAPIError(
+                f"Withings API error {body.get('status')}: {body.get('error')}"
             )
-            observations.append(obs)
-    return observations
+        return body["body"]
 
-async def sync_user(user_id: str):
-    async with async_session() as session:
-        result = await session.execute(select(TokenRecord).where(TokenRecord.user_id == user_id))
-        token = result.scalar_one_or_none()
-        if not token:
-            logger.warning(f"No token for user {user_id}")
-            return
-        
-        measuregrps = await fetch_measurements(token)
-        observations = convert_to_fhir(user_id, measuregrps)
-        
-        for obs in observations:
-            session.add(obs)
-        await session.commit()
-        logger.info(f"Synced {len(observations)} observations for user {user_id}")
+    # -------------------------------------------------------------------------
+    # Measurement groups (existing functionality)
+    # -------------------------------------------------------------------------
+    def get_measures(self, **kwargs: Any) -> Dict[str, Any]:
+        """
+        Wrapper around /measure?action=getmeas to retrieve measurement groups.
+        Accepts kwargs such as startdate, enddate, meastype, etc.
+        """
+        return self._post("/measure", {"action": "getmeas", **kwargs})
 
-async def sync_all_users():
-    async with async_session() as session:
-        result = await session.execute(select(TokenRecord))
-        tokens = result.scalars().all()
-        for token in tokens:
-            await sync_user(token.user_id)
+    # -------------------------------------------------------------------------
+    # Activity (steps, distance, calories, intensity zones, etc.)
+    # -------------------------------------------------------------------------
+    def get_daily_activity(
+        self,
+        startdateymd: str,
+        enddateymd: str,
+        data_fields: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch daily activity summaries between startdateymd and enddateymd (YYYY-MM-DD).
+        Requires scope user.activity.
+        """
+        if data_fields is None:
+            # Explicitly request the key fields we care about; Withings allows comma-separated list.
+            data_fields = ",".join(
+                [
+                    "steps",
+                    "distance",
+                    "calories",
+                    "totalcalories",
+                    "soft",
+                    "moderate",
+                    "intense",
+                    "active",
+                    "hr_average",
+                    "hr_min",
+                    "hr_max",
+                ]
+            )
+
+        body = self._post(
+            "/v2/measure",
+            {
+                "action": "getactivity",
+                "startdateymd": startdateymd,
+                "enddateymd": enddateymd,
+                "data_fields": data_fields,
+            },
+        )
+        return body.get("activities", [])
+
+    # -------------------------------------------------------------------------
+    # Sleep summaries (aggregated sleep metrics)
+    # -------------------------------------------------------------------------
+    def get_sleep_summary(
+        self,
+        startdateymd: str,
+        enddateymd: str,
+        data_fields: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch sleep summary series (per-night aggregated metrics).
+        Requires scope user.sleepevents.
+        """
+        if data_fields is None:
+            data_fields = ",".join(
+                [
+                    "sleep_score",
+                    "total_sleep_time",
+                    "total_timeinbed",
+                    "deepsleepduration",
+                    "lightsleepduration",
+                    "remsleepduration",
+                    "wakeupduration",
+                    "wakeupcount",
+                    "wasoduration",
+                    "efficiency",
+                    "avg_wakeup_latency",
+                ]
+            )
+
+        body = self._post(
+            "/v2/sleep",
+            {
+                "action": "getsummary",
+                "startdateymd": startdateymd,
+                "enddateymd": enddateymd,
+                "data_fields": data_fields,
+            },
+        )
+        return body.get("series", [])
+
+    # -------------------------------------------------------------------------
+    # Sleep events (raw timelines)
+    # -------------------------------------------------------------------------
+    def get_sleep_events(
+        self,
+        startdate: int,
+        enddate: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch raw sleep event data between unix timestamps.
+        Event types (per Withings):
+         1 = got in bed
+         2 = fell asleep
+         3 = woke up
+         4 = got out of bed
+         5 = manually entered asleep period start
+        Requires scope user.sleepevents.
+        """
+        body = self._post(
+            "/v2/sleep",
+            {
+                "action": "getsleep",
+                "startdate": startdate,
+                "enddate": enddate,
+            },
+        )
+        return body.get("series", [])
