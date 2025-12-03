@@ -10,14 +10,14 @@ from src.routes.health import router as health_router
 from src.routes.observations import router as observations_router
 from src.routes.auth import router as auth_router
 
-app = FastAPI(
+api = FastAPI(
     title="Withings MCP",
     description="Withings health data integration - Timothy's health optimization tracking",
     version="1.0.0"
 )
 
 # CORS middleware
-app.add_middleware(
+api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -26,7 +26,7 @@ app.add_middleware(
 )
 
 # Root endpoint for Simtheory MCP validation
-@app.get("/")
+@api.get("/")
 def root():
     return {
         "status": "ok",
@@ -36,6 +36,9 @@ def root():
     }
 
 # Include routers
-app.include_router(health_router)
-app.include_router(observations_router)
-app.include_router(auth_router)
+api.include_router(health_router)
+api.include_router(observations_router)
+api.include_router(auth_router)
+
+# Alias for compatibility
+app = api
