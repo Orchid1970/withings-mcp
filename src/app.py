@@ -1,37 +1,41 @@
-from fastapi import FastAPI # Removed redundant import of Depends, HTTPException, List, BaseModel
-import logging
-from contextlib import asynccontextmanager
-from src.database import init_db
+"""
+Withings MCP - Main Application
+FastAPI application for Withings health data integration
+"""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
 from src.routes.health import router as health_router
+from src.routes.observations import router as observations_router
 from src.routes.auth import router as auth_router
-from src.routes.workflows import router as workflows_router
-from src.routes.observations import router as observations_router # NEW: Import observations router
-from src.scheduler import start_scheduler
 
-logging.basicConfig(
-    handlers=[logging.StreamHandler()],
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-@asynccontextmanager
-async def lifespan(api: FastAPI):
-    logger.info("Starting Withings MCP...")
-    await init_db() # Still commented out for now
-    start_scheduler() # Still commented out for now
-    yield
-    logger.info("Shutting down Withings MCP...")
-
-api = FastAPI(
+app = FastAPI(
     title="Withings MCP",
-    description="Health Data Orchestrator - Withings to FHIR",
-    version="1.0.0",
-    lifespan=lifespan
+    description="Withings health data integration - Timothy's health optimization tracking",
+    version="1.0.0"
 )
 
-# --- Router Inclusions ---
-api.include_router(health_router)
-api.include_router(auth_router, prefix="/auth")
-api.include_router(workflows_router, prefix="/workflows")
-api.include_router(observations_router) # NEW: Include observations router
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Root endpoint for Simtheory MCP validation
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "service": "withings-mcp",
+        "version": "1.0.0",
+        "description": "Withings health data integration for Timothy Escamilla"
+    }
+
+# Include routers
+app.include_router(health_router)
+app.include_router(observations_router)
+app.include_router(auth_router)
