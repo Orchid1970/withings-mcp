@@ -1,7 +1,7 @@
+# Cache bust v2
 fastapi==0.104.1
 uvicorn==0.24.0
 httpx==0.25.1
 python-dotenv==1.0.0
 cryptography==41.0.7
-openpyxl==3.11.0
-# Cache bust v2
+openpyxl==3.1.5
