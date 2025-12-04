@@ -16,20 +16,20 @@ router = APIRouter()
 WITHINGS_AUTH = "https://account.withings.com/oauth2_user/authorize2"
 WITHINGS_TOKEN = os.getenv("WITHINGS_TOKEN_URL", "https://wbsapi.withings.net/v2/oauth2")
 
-@router.get("/withings")
+@router.get("/")
 async def initiate_oauth():
     settings = get_settings()
     params = {
         "response_type": "code",
         "client_id": settings.WITHINGS_CLIENT_ID,
-        "redirect_uri": f"{settings.BASE_URL}/auth/withings/callback",
+        "redirect_uri": f"{settings.BASE_URL}/auth/callback",
         "scope": "user.metrics,user.activity,user.sleepevents",
         "state": "withings_oauth"
     }
     url = f"{WITHINGS_AUTH}?" + "&".join(f"{k}={v}" for k, v in params.items())
     return RedirectResponse(url)
 
-@router.get("/withings/callback")
+@router.get("/callback")
 async def oauth_callback(code: str, state: str # , db: AsyncSession = Depends(get_db) # Comment out db dependency
 ):
     settings = get_settings()
@@ -41,7 +41,7 @@ async def oauth_callback(code: str, state: str # , db: AsyncSession = Depends(ge
             "client_id": settings.WITHINGS_CLIENT_ID,
             "client_secret": settings.WITHINGS_CLIENT_SECRET,
             "code": code,
-            "redirect_uri": f"{settings.BASE_URL}/auth/withings/callback"
+            "redirect_uri": f"{settings.BASE_URL}/auth/callback"
         })
         
         data = resp.json()
