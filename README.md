@@ -1,6 +1,6 @@
 # Withings MCP
 
-**Health Data Orchestrator** - A FastAPI service that connects to Withings, ingests health data, and normalizes it to FHIR-like Observations.
+**Health Data Orchestrator** - A FastAPI service that connects to Withings, ingests health data, and normalizes it to FHIR-like Observations. 
 
 ## Features
 
