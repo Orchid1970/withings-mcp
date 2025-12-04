@@ -85,30 +85,47 @@ async def fetch_withings_data(measure_type: int, lookback_days: int = 365) -> di
 async def fetch_withings_activity(lookback_days: int = 365) -> dict:
     """
     Fetch activity data from Withings API
-    Uses the v2/user endpoint for activity data
+    Uses the v2/measure endpoint with POST for activity data
     """
-    if not ACCESS_TOKEN or not USER_ID:
-        return {"error": "WITHINGS_ACCESS_TOKEN or WITHINGS_USER_ID not configured"}
+    if not ACCESS_TOKEN:
+        return {"error": "WITHINGS_ACCESS_TOKEN not configured"}
     
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=lookback_days)
     
-    params = {
+    # All available activity data fields
+    data_fields = ",".join([
+        "steps",
+        "distance",
+        "elevation",
+        "soft",
+        "moderate",
+        "intense",
+        "active",
+        "calories",
+        "totalcalories",
+        "hr_average",
+        "hr_min",
+        "hr_max",
+        "hr_zone_0",
+        "hr_zone_1",
+        "hr_zone_2",
+        "hr_zone_3"
+    ])
+    
+    payload = {
         "action": "getactivity",
         "startdateymd": start_date.strftime("%Y-%m-%d"),
-        "enddateymd": end_date.strftime("%Y-%m-%d")
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}"
+        "enddateymd": end_date.strftime("%Y-%m-%d"),
+        "data_fields": data_fields,
+        "access_token": ACCESS_TOKEN
     }
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                f"{BASE_URL}/v2/user",
-                params=params,
-                headers=headers
+            response = await client.post(
+                f"{BASE_URL}/v2/measure",
+                data=payload
             )
             response.raise_for_status()
             data = response.json()
@@ -131,31 +148,60 @@ async def fetch_withings_activity(lookback_days: int = 365) -> dict:
 
 async def fetch_withings_sleep(lookback_days: int = 365) -> dict:
     """
-    Fetch sleep data from Withings API
-    Uses the v2/sleep endpoint
+    Fetch sleep summary data from Withings API
+    Uses the v2/sleep endpoint with POST for sleep summaries
     """
-    if not ACCESS_TOKEN or not USER_ID:
-        return {"error": "WITHINGS_ACCESS_TOKEN or WITHINGS_USER_ID not configured"}
+    if not ACCESS_TOKEN:
+        return {"error": "WITHINGS_ACCESS_TOKEN not configured"}
     
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=lookback_days)
     
-    params = {
-        "action": "getsleep",
-        "startdate": int(start_date.timestamp()),
-        "enddate": int(end_date.timestamp())
-    }
+    # All available sleep data fields
+    data_fields = ",".join([
+        "nb_rem_episodes",
+        "sleep_efficiency",
+        "sleep_latency",
+        "total_sleep_time",
+        "total_timeinbed",
+        "wakeup_latency",
+        "waso",
+        "apnea_hypopnea_index",
+        "breathing_disturbances_intensity",
+        "asleepduration",
+        "deepsleepduration",
+        "durationtosleep",
+        "durationtowakeup",
+        "hr_average",
+        "hr_max",
+        "hr_min",
+        "lightsleepduration",
+        "night_events",
+        "out_of_bed_count",
+        "remsleepduration",
+        "rr_average",
+        "rr_max",
+        "rr_min",
+        "sleep_score",
+        "snoring",
+        "snoringepisodecount",
+        "wakeupcount",
+        "wakeupduration"
+    ])
     
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}"
+    payload = {
+        "action": "getsummary",
+        "startdateymd": start_date.strftime("%Y-%m-%d"),
+        "enddateymd": end_date.strftime("%Y-%m-%d"),
+        "data_fields": data_fields,
+        "access_token": ACCESS_TOKEN
     }
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
+            response = await client.post(
                 f"{BASE_URL}/v2/sleep",
-                params=params,
-                headers=headers
+                data=payload
             )
             response.raise_for_status()
             data = response.json()
@@ -163,7 +209,7 @@ async def fetch_withings_sleep(lookback_days: int = 365) -> dict:
             if data.get("status") != 0:
                 return {"error": f"Withings API error: {data.get('error', 'Unknown')}"}
             
-            sleep_data = data.get("body", {}).get("sleep", [])
+            sleep_data = data.get("body", {}).get("series", [])
             
             return {
                 "status": "ok",
@@ -207,7 +253,7 @@ async def get_blood_pressure(lookback_days: int = Query(365, ge=1, le=1825)):
 @router.get("/activity")
 async def get_activity(lookback_days: int = Query(365, ge=1, le=1825)):
     """
-    Fetch activity data (steps, calories, distance, etc.)
+    Fetch activity data (steps, calories, distance, heart rate zones, etc.)
     Returns activity measurements for the past N days (default 365)
     """
     return await fetch_withings_activity(lookback_days=lookback_days)
@@ -216,7 +262,7 @@ async def get_activity(lookback_days: int = Query(365, ge=1, le=1825)):
 @router.get("/sleep")
 async def get_sleep(lookback_days: int = Query(365, ge=1, le=1825)):
     """
-    Fetch sleep data (duration, quality, REM, deep sleep, etc.)
+    Fetch sleep summary data (duration, quality, stages, HR, RR, snoring, etc.)
     Returns sleep measurements for the past N days (default 365)
     """
     return await fetch_withings_sleep(lookback_days=lookback_days)
