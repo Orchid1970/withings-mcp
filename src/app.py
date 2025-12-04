@@ -1,24 +1,20 @@
 """
-Withings MCP - Main Application
-FastAPI application for Withings health data integration
+FastAPI application for Withings MCP service.
 """
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.routes.health import router as health_router
-from src.routes.observations import router as observations_router
-from src.routes.auth import router as auth_router
-from src.routes.data import router as data_router
+from src.routes import auth, health, observations, workflows, export
 
-api = FastAPI(
-    title="Withings MCP",
-    description="Withings health data integration - Timothy's health optimization tracking",
+app = FastAPI(
+    title="Withings MCP Service",
+    description="Timothy's health optimization tracking via Withings API",
     version="1.0.0"
 )
 
 # CORS middleware
-api.add_middleware(
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -26,21 +22,24 @@ api.add_middleware(
     allow_headers=["*"],
 )
 
-# Root endpoint for Simtheory MCP validation
-@api.get("/")
-def root():
-    return {
-        "status": "ok",
-        "service": "withings-mcp",
-        "version": "1.0.0",
-        "description": "Withings health data integration for Timothy Escamilla"
-    }
-
 # Include routers
-api.include_router(health_router, prefix="/health")
-api.include_router(observations_router, prefix="/observations")
-api.include_router(auth_router, prefix="/auth")
-api.include_router(data_router, prefix="/data")
+app.include_router(health.router)
+app.include_router(auth.router)
+app.include_router(observations.router)
+app.include_router(workflows.router)
+app.include_router(export.router)
 
-# Alias for compatibility
-app = api
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {
+        "service": "Withings MCP",
+        "version": "1.0.0",
+        "description": "Timothy's health optimization tracking",
+        "endpoints": {
+            "health": "/health/",
+            "auth": "/auth/",
+            "data": "/data/",
+            "export": "/export/excel"
+        }
+    }
