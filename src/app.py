@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.routes.health import router as health_router
 from src.routes.observations import router as observations_router
 from src.routes.auth import router as auth_router
+from src.routes.data import router as data_router
 
 api = FastAPI(
     title="Withings MCP",
@@ -39,6 +40,7 @@ def root():
 api.include_router(health_router, prefix="/health")
 api.include_router(observations_router, prefix="/observations")
 api.include_router(auth_router, prefix="/auth")
+api.include_router(data_router, prefix="/data")
 
 # Alias for compatibility
 app = api
