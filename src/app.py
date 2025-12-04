@@ -36,9 +36,9 @@ def root():
     }
 
 # Include routers
-api.include_router(health_router)
-api.include_router(observations_router)
-api.include_router(auth_router)
+api.include_router(health_router, prefix="/health")
+api.include_router(observations_router, prefix="/observations")
+api.include_router(auth_router, prefix="/auth")
 
 # Alias for compatibility
 app = api
