@@ -6,8 +6,9 @@ Supports both V1 (metrics) and V2 (activity) endpoints
 import logging
 import os
 from datetime import datetime, timedelta
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import httpx
+from src.clients.withings_client import WithingsClient
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,6 +39,17 @@ MEASUREMENT_TYPES_V1 = {
     77: "SpO2",
     88: "Respiratory Rate"
 }
+
+
+# -------------------------------------------------------------------------
+# Dependency function
+# -------------------------------------------------------------------------
+async def get_withings_access_token() -> str:
+    """Dependency to get Withings access token from environment."""
+    token = os.getenv("WITHINGS_ACCESS_TOKEN")
+    if not token:
+        raise HTTPException(status_code=500, detail="Withings token not configured")
+    return token
 
 
 async def fetch_v1_metrics(access_token: str, start_date: int, end_date: int) -> list:
@@ -230,3 +242,72 @@ async def get_observations(days: int = 7):
     except Exception as e:
         logger.error(f"Error in get_observations: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------------------
+# NEW: Daily activity (steps, distance, calories)
+# -------------------------------------------------------------------------
+@router.get("/withings/activity/daily")
+async def get_withings_daily_activity(
+    start: str,
+    end: str,
+    access_token: str = Depends(get_withings_access_token),
+):
+    """
+    Returns Withings daily activity summaries for the provided date range (YYYY-MM-DD).
+    """
+    client = WithingsClient(access_token)
+    try:
+        activities = client.get_daily_activity(startdateymd=start, enddateymd=end)
+    except Exception as exc:
+        logger.exception("Withings activity fetch failed")
+        raise HTTPException(status_code=502, detail=f"Withings activity fetch failed: {exc}")
+    return {"activities": activities}
+
+
+# -------------------------------------------------------------------------
+# NEW: Sleep summary (per-night aggregated metrics)
+# -------------------------------------------------------------------------
+@router.get("/withings/sleep/summary")
+async def get_withings_sleep_summary(
+    start: str,
+    end: str,
+    access_token: str = Depends(get_withings_access_token),
+):
+    """
+    Returns Withings sleep summary between start/end YYYY-MM-DD.
+    """
+    client = WithingsClient(access_token)
+    try:
+        summary = client.get_sleep_summary(startdateymd=start, enddateymd=end)
+    except Exception as exc:
+        logger.exception("Withings sleep summary fetch failed")
+        raise HTTPException(status_code=502, detail=f"Withings sleep summary fetch failed: {exc}")
+    return {"series": summary}
+
+
+# -------------------------------------------------------------------------
+# NEW: Sleep events (raw timelines)
+# -------------------------------------------------------------------------
+@router.get("/withings/sleep/events")
+async def get_withings_sleep_events(
+    start_ts: int,
+    end_ts: int,
+    access_token: str = Depends(get_withings_access_token),
+):
+    """
+    Returns Withings sleep events between unix timestamps.
+    Event types:
+      1: got in bed
+      2: fell asleep
+      3: woke up
+      4: got out of bed
+      5: start of manually input asleep period
+    """
+    client = WithingsClient(access_token)
+    try:
+        events = client.get_sleep_events(startdate=start_ts, enddate=end_ts)
+    except Exception as exc:
+        logger.exception("Withings sleep events fetch failed")
+        raise HTTPException(status_code=502, detail=f"Withings sleep events fetch failed: {exc}")
+    return {"events": events}

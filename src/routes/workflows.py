@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from src.database import get_db
 from src.models import Observation
-from src.withings_client import sync_user, sync_all_users
+from src.clients.withings_client import sync_user, sync_all_users
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
