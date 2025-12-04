@@ -1,4 +1,4 @@
- """
+"""
 Withings MCP - Main Application
 FastAPI application for Withings health data integration
 """
