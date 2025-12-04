@@ -57,7 +57,7 @@ async def fetch_withings_data(measure_type: int, lookback_days: int = 365) -> di
                 data = response.json()
                 
                 if data.get("status") != 0:
-                    return {"error": f"Withings API error: {data.get('error', 'Unknown')}"}
+                    return {"error": f"Withings API error (status {data.get('status')}): {data.get('error', 'Unknown')}"}
                 
                 measures = data.get("body", {}).get("measuregrps", [])
                 if not measures:
@@ -221,3 +221,78 @@ async def fetch_withings_sleep(lookback_days: int = 365) -> dict:
             
             return {
                 "status": "ok",
+                "sleep": sleep_data,
+                "count": len(sleep_data),
+                "lookback_days": lookback_days
+            }
+    
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/metrics")
+async def get_metrics(lookback_days: int = Query(365, ge=1, le=1825)):
+    """
+    Fetch weight metrics (measure_type=1)
+    Returns weight measurements for the past N days (default 365)
+    """
+    return await fetch_withings_data(measure_type=1, lookback_days=lookback_days)
+
+
+@router.get("/blood-pressure")
+async def get_blood_pressure(lookback_days: int = Query(365, ge=1, le=1825)):
+    """
+    Fetch blood pressure data (systolic=10, diastolic=9)
+    Returns BP readings for the past N days (default 365)
+    """
+    # Fetch both systolic and diastolic - we'll combine them
+    systolic = await fetch_withings_data(measure_type=10, lookback_days=lookback_days)
+    diastolic = await fetch_withings_data(measure_type=9, lookback_days=lookback_days)
+    
+    return {
+        "status": "ok",
+        "systolic": systolic.get("measurements", []),
+        "diastolic": diastolic.get("measurements", []),
+        "count": len(systolic.get("measurements", [])),
+        "lookback_days": lookback_days
+    }
+
+
+@router.get("/activity")
+async def get_activity(lookback_days: int = Query(365, ge=1, le=1825)):
+    """
+    Fetch activity data (steps, calories, distance, heart rate zones, etc.)
+    Returns activity measurements for the past N days (default 365)
+    """
+    return await fetch_withings_activity(lookback_days=lookback_days)
+
+
+@router.get("/sleep")
+async def get_sleep(lookback_days: int = Query(365, ge=1, le=1825)):
+    """
+    Fetch sleep summary data (duration, quality, stages, HR, RR, snoring, etc.)
+    Returns sleep measurements for the past N days (default 365)
+    """
+    return await fetch_withings_sleep(lookback_days=lookback_days)
+
+
+@router.get("/all")
+async def get_all_data(lookback_days: int = Query(365, ge=1, le=1825)):
+    """
+    Fetch all available health data (weight, blood pressure, activity, sleep)
+    """
+    metrics = await fetch_withings_data(measure_type=1, lookback_days=lookback_days)
+    bp = await get_blood_pressure(lookback_days=lookback_days)
+    activity = await fetch_withings_activity(lookback_days=lookback_days)
+    sleep = await fetch_withings_sleep(lookback_days=lookback_days)
+    
+    return {
+        "status": "ok",
+        "data": {
+            "weight": metrics,
+            "blood_pressure": bp,
+            "activity": activity,
+            "sleep": sleep
+        },
+        "lookback_days": lookback_days
+    }
