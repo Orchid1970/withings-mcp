@@ -5,7 +5,7 @@ FastAPI application for Withings MCP service.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.routes import auth, health, observations, workflows, export
+from src.routes import auth, health, observations, workflows, export, data
 
 app = FastAPI(
     title="Withings MCP Service",
@@ -28,6 +28,7 @@ app.include_router(auth.router, prefix="/auth")
 app.include_router(observations.router)
 app.include_router(workflows.router)
 app.include_router(export.router)
+app.include_router(data.router, prefix="/withings")
 
 @app.get("/")
 async def root():
@@ -39,7 +40,7 @@ async def root():
         "endpoints": {
             "health": "/health/",
             "auth": "/auth/",
-            "data": "/data/",
+            "withings": "/withings/",
             "export": "/export/excel"
         }
     }
