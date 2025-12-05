@@ -77,3 +77,39 @@ async def oauth_callback(code: str, state: str # , db: AsyncSession = Depends(ge
         
         # await db.commit() # Comment out
         return {"status": "connected", "user_id": user_id, "access_token_debug": access_token, "refresh_token_debug": refresh_token} # Added debug output
+
+@router.post("/refresh")
+async def refresh_tokens():
+    settings = get_settings()
+    refresh_token = os.getenv("WITHINGS_REFRESH_TOKEN")
+    
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="No refresh token available")
+    
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(WITHINGS_TOKEN, data={
+            "action": "requesttoken",
+            "grant_type": "refresh_token",
+            "client_id": settings.WITHINGS_CLIENT_ID,
+            "client_secret": settings.WITHINGS_CLIENT_SECRET,
+            "refresh_token": refresh_token
+        })
+        
+        data = resp.json()
+        if data.get("status") != 0:
+            logger.error(f"Refresh error: {data}")
+            raise HTTPException(status_code=400, detail="Token refresh failed")
+        
+        body = data["body"]
+        new_access = body["access_token"]
+        new_refresh = body["refresh_token"]
+        expires_in = body["expires_in"]
+        
+        logger.info(f"Tokens refreshed. New Access: {new_access}, New Refresh: {new_refresh}, Expires: {expires_in}s")
+        
+        return {
+            "status": "refreshed",
+            "access_token": new_access,
+            "refresh_token": new_refresh,
+            "expires_in": expires_in
+        }
