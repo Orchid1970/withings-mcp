@@ -21,7 +21,8 @@ async def fetch_withings_data(measure_type: int, lookback_days: int = 365) -> di
     Fetch data from Withings API with pagination support
     measure_type: 1=weight, 4=height, 5=fat_free_mass, 6=fat_ratio, 8=fat_mass, 
                   9=diastolic_bp, 10=systolic_bp, 11=heart_rate, 12=temperature,
-                  54=spo2, 71=body_temperature, 73=skin_temperature
+                  54=spo2, 71=body_temperature, 73=skin_temperature,
+                  88=blood_glucose (mg/dL)
     """
     if not ACCESS_TOKEN:
         return {"error": "WITHINGS_ACCESS_TOKEN not configured"}
@@ -256,6 +257,16 @@ async def get_blood_pressure(lookback_days: int = Query(365, ge=1, le=1825)):
         "count": len(systolic.get("measurements", [])),
         "lookback_days": lookback_days
     }
+
+
+@router.get("/blood-glucose")
+async def get_blood_glucose(lookback_days: int = Query(365, ge=1, le=1825)):
+    """
+    Fetch blood glucose data (measure_type=88)
+    Returns blood glucose readings in mg/dL for the past N days (default 365)
+    Note: Requires CGM or glucose meter synced via HealthKit to Withings
+    """
+    return await fetch_withings_data(measure_type=88, lookback_days=lookback_days)
 
 
 @router.get("/activity")
