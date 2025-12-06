@@ -65,6 +65,7 @@ app.add_middleware(
 )
 
 # Import and include routers
+# Admin routes
 try:
     logger.info("Attempting to import admin routes...")
     from src.routes.admin import router as admin_router
@@ -77,6 +78,7 @@ except ImportError as e:
 except Exception as e:
     logger.error(f"Error including admin router: {e}")
 
+# MCP protocol routes
 try:
     from src.routes.mcp_protocol import router as mcp_router
     app.include_router(mcp_router)
@@ -84,12 +86,53 @@ try:
 except ImportError as e:
     logger.warning(f"MCP protocol routes not available: {e}")
 
+# Auth routes
 try:
     from src.routes.auth import router as auth_router
     app.include_router(auth_router, prefix="/auth")
     logger.info("Auth router included at /auth")
 except ImportError as e:
     logger.warning(f"Auth routes not available: {e}")
+
+# Data routes (Withings health data endpoints)
+try:
+    from src.routes.data import router as data_router
+    app.include_router(data_router, prefix="/data", tags=["Health Data"])
+    logger.info("Data router included at /data")
+except ImportError as e:
+    logger.warning(f"Data routes not available: {e}")
+except Exception as e:
+    logger.error(f"Error including data router: {e}")
+
+# Observations routes (FHIR-style observations)
+try:
+    from src.routes.observations import router as observations_router
+    app.include_router(observations_router, prefix="/observations", tags=["Observations"])
+    logger.info("Observations router included at /observations")
+except ImportError as e:
+    logger.warning(f"Observations routes not available: {e}")
+except Exception as e:
+    logger.error(f"Error including observations router: {e}")
+
+# Export routes
+try:
+    from src.routes.export import router as export_router
+    app.include_router(export_router, prefix="/export", tags=["Export"])
+    logger.info("Export router included at /export")
+except ImportError as e:
+    logger.warning(f"Export routes not available: {e}")
+except Exception as e:
+    logger.error(f"Error including export router: {e}")
+
+# Workflows routes
+try:
+    from src.routes.workflows import router as workflows_router
+    app.include_router(workflows_router, prefix="/workflows", tags=["Workflows"])
+    logger.info("Workflows router included at /workflows")
+except ImportError as e:
+    logger.warning(f"Workflows routes not available: {e}")
+except Exception as e:
+    logger.error(f"Error including workflows router: {e}")
 
 
 @app.get("/")
@@ -106,6 +149,10 @@ async def root():
             "health": "/health",
             "admin": "/admin/*",
             "mcp": "/mcp/*",
+            "data": "/data/*",
+            "observations": "/observations/*",
+            "export": "/export/*",
+            "auth": "/auth/*",
             "scheduler": "/admin/scheduler/status"
         }
     }
