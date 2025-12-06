@@ -28,9 +28,8 @@ except ImportError as e:
     ADMIN_ENABLED = False
     logger.warning(f"Admin routes not available: {e}")
 
-# Import existing routes - CORRECTED: mcp_protocol not mcp
+# Import existing routes
 from src.routes import auth, health, mcp_protocol
-from src.config import settings
 
 
 @asynccontextmanager
