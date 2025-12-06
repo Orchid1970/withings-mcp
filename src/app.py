@@ -8,45 +8,68 @@ Deployed on Railway with Simtheory.ai MCP integration.
 """
 
 import os
+import sys
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging early
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Import token refresh admin routes (optional - graceful fallback if not available)
-try:
-    from app.routes.admin import router as admin_router
-    from app.utils.logging_config import setup_logging
-    ADMIN_ENABLED = True
-    logger.info("Admin routes loaded successfully")
-except ImportError as e:
-    ADMIN_ENABLED = False
-    logger.warning(f"Admin routes not available: {e}")
+# Log Python path for debugging
+logger.info(f"Python path: {sys.path}")
+logger.info(f"Current working directory: {os.getcwd()}")
 
 # Import existing routes
 from src.routes import auth, health, mcp_protocol
+
+# Track admin status
+ADMIN_ENABLED = False
+admin_router = None
+admin_import_error = None
+
+# Import token refresh admin routes (with detailed error logging)
+try:
+    logger.info("Attempting to import admin routes...")
+    from app.routes.admin import router as admin_router
+    logger.info(f"Admin router imported: {admin_router}")
+    logger.info(f"Admin router routes: {admin_router.routes}")
+    ADMIN_ENABLED = True
+    logger.info("Admin routes loaded successfully")
+except ImportError as e:
+    admin_import_error = str(e)
+    logger.error(f"Admin routes import failed: {e}")
+    import traceback
+    logger.error(traceback.format_exc())
+except Exception as e:
+    admin_import_error = str(e)
+    logger.error(f"Admin routes unexpected error: {e}")
+    import traceback
+    logger.error(traceback.format_exc())
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
-    # Startup
     logger.info("Withings MCP starting up...")
-    
-    # Setup structured logging if admin module is available
-    if ADMIN_ENABLED:
-        setup_logging()
-        logger.info("Structured logging configured")
-    
     logger.info(f"Admin endpoints enabled: {ADMIN_ENABLED}")
-    yield
+    if admin_import_error:
+        logger.warning(f"Admin import error was: {admin_import_error}")
     
-    # Shutdown
+    # Log all registered routes
+    logger.info("Registered routes:")
+    for route in app.routes:
+        if hasattr(route, 'path'):
+            methods = getattr(route, 'methods', ['N/A'])
+            logger.info(f"  {methods} {route.path}")
+    
+    yield
     logger.info("Withings MCP shutting down...")
 
 
@@ -58,7 +81,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware - allow all origins for MCP compatibility
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -68,29 +91,32 @@ app.add_middleware(
 )
 
 # Include existing routers
+logger.info("Including auth router...")
 app.include_router(auth.router)
+logger.info("Including health router...")
 app.include_router(health.router)
+logger.info("Including mcp_protocol router...")
 app.include_router(mcp_protocol.router)
 
-# Include admin router for token management (if available)
-if ADMIN_ENABLED:
+# Include admin router if available
+if ADMIN_ENABLED and admin_router is not None:
+    logger.info(f"Including admin router with prefix: {admin_router.prefix}")
     app.include_router(admin_router)
-    logger.info("Admin router included at /admin/*")
+    logger.info("Admin router included successfully")
+else:
+    logger.warning(f"Admin router NOT included. ADMIN_ENABLED={ADMIN_ENABLED}, admin_router={admin_router}")
 
 
 @app.get("/")
 async def root():
-    """
-    Root endpoint - service information.
-    
-    Returns basic service info and status.
-    """
+    """Root endpoint - service information."""
     return {
         "service": "withings-mcp",
         "version": "1.0.0",
         "description": "Timothy's health optimization tracking",
         "status": "operational",
         "admin_endpoints": ADMIN_ENABLED,
+        "admin_import_error": admin_import_error,
         "endpoints": {
             "health": "/health",
             "mcp": "/mcp",
@@ -102,36 +128,22 @@ async def root():
 
 @app.post("/")
 async def root_post(request: Request):
-    """
-    Root POST handler for MCP protocol.
-    
-    Simtheory.ai sends MCP requests to the root endpoint.
-    This handler forwards them to the MCP router.
-    """
+    """Root POST handler for MCP protocol."""
     try:
         body = await request.json()
         logger.debug(f"MCP request received: {body.get('method', 'unknown')}")
-        
-        # Forward to MCP handler
         from src.routes.mcp_protocol import handle_mcp_request
         return await handle_mcp_request(body)
-        
     except Exception as e:
         logger.error(f"Error processing MCP request: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler for unhandled errors."""
+    """Global exception handler."""
     logger.error(f"Unhandled exception: {exc}")
     return JSONResponse(
         status_code=500,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc) if os.getenv("ENVIRONMENT") == "development" else None
-        }
+        content={"error": "Internal server error"}
     )
