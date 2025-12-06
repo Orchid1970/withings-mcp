@@ -26,21 +26,21 @@ class TokenRefreshService:
     WITHINGS_TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2"
     
     def __init__(self):
-        self.client_id = os.getenv("WITHINGS_CLIENT_ID")
-        self.client_secret = os.getenv("WITHINGS_CLIENT_SECRET")
-        self.refresh_token = os.getenv("WITHINGS_REFRESH_TOKEN")
+        self._client_id = os.getenv("WITHINGS_CLIENT_ID")
+        self._client_secret = os.getenv("WITHINGS_CLIENT_SECRET")
+        self._refresh_token_value = os.getenv("WITHINGS_REFRESH_TOKEN")  # Renamed to avoid conflict
         
     def _validate_config(self) -> Optional[str]:
         """Validate required configuration. Returns error message if invalid."""
-        if not self.client_id:
+        if not self._client_id:
             return "WITHINGS_CLIENT_ID not configured"
-        if not self.client_secret:
+        if not self._client_secret:
             return "WITHINGS_CLIENT_SECRET not configured"
-        if not self.refresh_token:
+        if not self._refresh_token_value:
             return "WITHINGS_REFRESH_TOKEN not configured"
         return None
     
-    async def refresh_token_from_withings(self) -> Dict[str, Any]:
+    async def _call_withings_api(self) -> Dict[str, Any]:
         """
         Call Withings API to refresh the OAuth token.
         
@@ -58,9 +58,9 @@ class TokenRefreshService:
                     data={
                         "action": "requesttoken",
                         "grant_type": "refresh_token",
-                        "client_id": self.client_id,
-                        "client_secret": self.client_secret,
-                        "refresh_token": self.refresh_token
+                        "client_id": self._client_id,
+                        "client_secret": self._client_secret,
+                        "refresh_token": self._refresh_token_value
                     }
                 )
                 
@@ -100,7 +100,7 @@ class TokenRefreshService:
             logger.error(f"Unexpected error during token refresh: {e}")
             return {"success": False, "error": str(e)}
     
-    async def update_railway_variables(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _update_railway_variables(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update Railway environment variables with new token data.
         
@@ -159,7 +159,7 @@ class TokenRefreshService:
                 "message": str(e)
             }
     
-    async def refresh_token(self) -> Dict[str, Any]:
+    async def do_refresh(self) -> Dict[str, Any]:
         """
         Main method to refresh token and update Railway.
         
@@ -169,7 +169,7 @@ class TokenRefreshService:
         logger.info("Starting token refresh process...")
         
         # Step 1: Refresh token from Withings
-        token_result = await self.refresh_token_from_withings()
+        token_result = await self._call_withings_api()
         
         if not token_result.get("success"):
             return token_result
@@ -177,7 +177,7 @@ class TokenRefreshService:
         logger.info(f"Token refreshed successfully, expires at: {token_result.get('expires_at')}")
         
         # Step 2: Update Railway environment variables
-        railway_result = await self.update_railway_variables(token_result)
+        railway_result = await self._update_railway_variables(token_result)
         
         return {
             "success": True,
