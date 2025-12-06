@@ -114,7 +114,7 @@ async def refresh_token(x_admin_token: Optional[str] = Header(None)):
         from app.services.token_refresh import TokenRefreshService
         
         service = TokenRefreshService()
-        result = await service.do_refresh()  # Call the renamed method
+        result = await service.do_refresh()
         
         if result.get("success"):
             logger.info(f"Token refresh successful, expires at: {result.get('expires_at')}")
@@ -147,6 +147,23 @@ async def refresh_token(x_admin_token: Optional[str] = Header(None)):
         }
 
 
+@router.get("/admin/scheduler/status")
+async def get_scheduler_status(x_admin_token: Optional[str] = Header(None)):
+    """
+    Get automatic refresh scheduler status.
+    
+    Returns:
+        Scheduler status information
+    """
+    verify_admin_token(x_admin_token)
+    
+    try:
+        from app.services.scheduler import get_scheduler_status as get_status
+        return get_status()
+    except ImportError:
+        return {"error": "Scheduler module not available"}
+
+
 @router.get("/admin/config")
 async def get_config(x_admin_token: Optional[str] = Header(None)):
     """
@@ -172,5 +189,9 @@ async def get_config(x_admin_token: Optional[str] = Header(None)):
         },
         "admin": {
             "admin_token_configured": bool(ADMIN_API_TOKEN)
+        },
+        "scheduler": {
+            "auto_refresh_enabled": os.getenv("AUTO_REFRESH_ENABLED", "true").lower() == "true",
+            "refresh_interval_seconds": int(os.getenv("TOKEN_REFRESH_INTERVAL_SECONDS", "7200"))
         }
     }
