@@ -6,10 +6,9 @@ Secured endpoints for Withings OAuth token refresh and status monitoring.
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Header, Depends
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -20,27 +19,9 @@ router = APIRouter(tags=["admin"])
 ADMIN_API_TOKEN = os.getenv("ADMIN_API_TOKEN")
 
 
-class TokenStatusResponse(BaseModel):
-    """Response model for token status."""
-    status: str
-    token_exists: bool
-    expires_at: Optional[str] = None
-    last_refreshed: Optional[str] = None
-    is_expired: bool = False
-    expires_in_hours: Optional[float] = None
-
-
-class RefreshResponse(BaseModel):
-    """Response model for token refresh."""
-    success: bool
-    message: str
-    new_expires_at: Optional[str] = None
-
-
 def verify_admin_token(x_admin_token: Optional[str] = Header(None)):
     """Verify admin API token for secured endpoints."""
     if not ADMIN_API_TOKEN:
-        # If no admin token configured, allow access (dev mode)
         logger.warning("ADMIN_API_TOKEN not configured - endpoints unsecured")
         return True
     
@@ -53,34 +34,30 @@ def verify_admin_token(x_admin_token: Optional[str] = Header(None)):
 async def admin_health():
     """
     Admin health check endpoint (no auth required).
-    
-    Returns basic health status for the admin module.
     """
     return {
         "status": "healthy",
         "module": "admin",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "secured": bool(ADMIN_API_TOKEN)
     }
 
 
-@router.get("/admin/token/status", response_model=TokenStatusResponse)
+@router.get("/admin/token/status")
 async def get_token_status(authorized: bool = Depends(verify_admin_token)):
     """
     Get current Withings OAuth token status.
-    
-    Returns information about token expiration and last refresh time.
     """
     access_token = os.getenv("WITHINGS_ACCESS_TOKEN")
     expires_at_str = os.getenv("WITHINGS_TOKEN_EXPIRES_AT")
     last_refreshed = os.getenv("WITHINGS_TOKEN_LAST_REFRESHED")
     
     if not access_token:
-        return TokenStatusResponse(
-            status="not_configured",
-            token_exists=False,
-            is_expired=True
-        )
+        return {
+            "status": "not_configured",
+            "token_exists": False,
+            "is_expired": True
+        }
     
     is_expired = False
     expires_in_hours = None
@@ -88,30 +65,28 @@ async def get_token_status(authorized: bool = Depends(verify_admin_token)):
     if expires_at_str:
         try:
             expires_at = datetime.fromisoformat(expires_at_str.replace('Z', '+00:00'))
-            now = datetime.utcnow()
-            is_expired = expires_at.replace(tzinfo=None) < now
+            now = datetime.now(timezone.utc)
+            is_expired = expires_at < now
             if not is_expired:
-                delta = expires_at.replace(tzinfo=None) - now
-                expires_in_hours = delta.total_seconds() / 3600
-        except ValueError:
-            logger.error(f"Invalid expires_at format: {expires_at_str}")
+                delta = expires_at - now
+                expires_in_hours = round(delta.total_seconds() / 3600, 2)
+        except ValueError as e:
+            logger.error(f"Invalid expires_at format: {expires_at_str} - {e}")
     
-    return TokenStatusResponse(
-        status="expired" if is_expired else "valid",
-        token_exists=True,
-        expires_at=expires_at_str,
-        last_refreshed=last_refreshed,
-        is_expired=is_expired,
-        expires_in_hours=round(expires_in_hours, 2) if expires_in_hours else None
-    )
+    return {
+        "status": "expired" if is_expired else "valid",
+        "token_exists": True,
+        "expires_at": expires_at_str,
+        "last_refreshed": last_refreshed,
+        "is_expired": is_expired,
+        "expires_in_hours": expires_in_hours
+    }
 
 
-@router.post("/admin/token/refresh", response_model=RefreshResponse)
+@router.post("/admin/token/refresh")
 async def refresh_token(authorized: bool = Depends(verify_admin_token)):
     """
     Manually trigger Withings OAuth token refresh.
-    
-    Refreshes the token and updates Railway environment variables.
     """
     try:
         from app.services.token_refresh import TokenRefreshService
@@ -120,37 +95,29 @@ async def refresh_token(authorized: bool = Depends(verify_admin_token)):
         result = await service.refresh_token()
         
         if result.get("success"):
-            return RefreshResponse(
-                success=True,
-                message="Token refreshed successfully",
-                new_expires_at=result.get("expires_at")
-            )
+            return {
+                "success": True,
+                "message": "Token refreshed successfully",
+                "new_expires_at": result.get("expires_at")
+            }
         else:
-            return RefreshResponse(
-                success=False,
-                message=result.get("error", "Unknown error during refresh")
-            )
+            return {
+                "success": False,
+                "message": result.get("error", "Unknown error during refresh")
+            }
             
     except ImportError as e:
         logger.error(f"Token refresh service not available: {e}")
-        return RefreshResponse(
-            success=False,
-            message="Token refresh service not available"
-        )
+        return {"success": False, "message": "Token refresh service not available"}
     except Exception as e:
         logger.error(f"Token refresh failed: {e}")
-        return RefreshResponse(
-            success=False,
-            message=str(e)
-        )
+        return {"success": False, "message": str(e)}
 
 
 @router.get("/admin/config")
 async def get_config(authorized: bool = Depends(verify_admin_token)):
     """
     Get current configuration status (sanitized).
-    
-    Returns which environment variables are configured without exposing values.
     """
     return {
         "withings": {
