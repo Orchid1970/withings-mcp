@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+# Router WITHOUT prefix - routes define their own paths
+router = APIRouter(tags=["admin"])
 
 # Admin token for securing endpoints
 ADMIN_API_TOKEN = os.getenv("ADMIN_API_TOKEN")
@@ -48,7 +49,7 @@ def verify_admin_token(x_admin_token: Optional[str] = Header(None)):
     return True
 
 
-@router.get("/health")
+@router.get("/admin/health")
 async def admin_health():
     """
     Admin health check endpoint (no auth required).
@@ -58,12 +59,12 @@ async def admin_health():
     return {
         "status": "healthy",
         "module": "admin",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.utcnow().isoformat() + "Z",
         "secured": bool(ADMIN_API_TOKEN)
     }
 
 
-@router.get("/token/status", response_model=TokenStatusResponse)
+@router.get("/admin/token/status", response_model=TokenStatusResponse)
 async def get_token_status(authorized: bool = Depends(verify_admin_token)):
     """
     Get current Withings OAuth token status.
@@ -88,9 +89,9 @@ async def get_token_status(authorized: bool = Depends(verify_admin_token)):
         try:
             expires_at = datetime.fromisoformat(expires_at_str.replace('Z', '+00:00'))
             now = datetime.utcnow()
-            is_expired = expires_at < now
+            is_expired = expires_at.replace(tzinfo=None) < now
             if not is_expired:
-                delta = expires_at - now
+                delta = expires_at.replace(tzinfo=None) - now
                 expires_in_hours = delta.total_seconds() / 3600
         except ValueError:
             logger.error(f"Invalid expires_at format: {expires_at_str}")
@@ -105,7 +106,7 @@ async def get_token_status(authorized: bool = Depends(verify_admin_token)):
     )
 
 
-@router.post("/token/refresh", response_model=RefreshResponse)
+@router.post("/admin/token/refresh", response_model=RefreshResponse)
 async def refresh_token(authorized: bool = Depends(verify_admin_token)):
     """
     Manually trigger Withings OAuth token refresh.
@@ -144,7 +145,7 @@ async def refresh_token(authorized: bool = Depends(verify_admin_token)):
         )
 
 
-@router.get("/config")
+@router.get("/admin/config")
 async def get_config(authorized: bool = Depends(verify_admin_token)):
     """
     Get current configuration status (sanitized).
