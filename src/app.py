@@ -28,8 +28,8 @@ except ImportError as e:
     ADMIN_ENABLED = False
     logger.warning(f"Admin routes not available: {e}")
 
-# Import existing routes
-from src.routes import auth, health, mcp
+# Import existing routes - CORRECTED: mcp_protocol not mcp
+from src.routes import auth, health, mcp_protocol
 from src.config import settings
 
 
@@ -71,7 +71,7 @@ app.add_middleware(
 # Include existing routers
 app.include_router(auth.router)
 app.include_router(health.router)
-app.include_router(mcp.router)
+app.include_router(mcp_protocol.router)
 
 # Include admin router for token management (if available)
 if ADMIN_ENABLED:
@@ -114,7 +114,7 @@ async def root_post(request: Request):
         logger.debug(f"MCP request received: {body.get('method', 'unknown')}")
         
         # Forward to MCP handler
-        from src.routes.mcp import handle_mcp_request
+        from src.routes.mcp_protocol import handle_mcp_request
         return await handle_mcp_request(body)
         
     except Exception as e:
