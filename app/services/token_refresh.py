@@ -1,14 +1,14 @@
 """
-Withings OAuth Token Refresh Service
-=====================================
-Handles automatic token refresh for Withings API integration.
+Token Refresh Service
+=====================
+Handles Withings OAuth token refresh and Railway environment variable updates.
 """
 
 import os
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
 import httpx
+from datetime import datetime, timezone, timedelta
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,165 +17,172 @@ class TokenRefreshService:
     """
     Service for refreshing Withings OAuth tokens.
     
-    Handles the OAuth2 refresh flow and optionally updates
-    Railway environment variables with new tokens.
+    Handles:
+    - Calling Withings OAuth API to refresh tokens
+    - Updating Railway environment variables with new tokens
+    - Tracking token expiration
     """
     
-    WITHINGS_TOKEN_URL = "https://wbsapi.withings.com/v2/oauth2"
+    WITHINGS_TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2"
     
     def __init__(self):
         self.client_id = os.getenv("WITHINGS_CLIENT_ID")
         self.client_secret = os.getenv("WITHINGS_CLIENT_SECRET")
         self.refresh_token = os.getenv("WITHINGS_REFRESH_TOKEN")
         
-    def _validate_config(self) -> bool:
-        """Validate required configuration exists."""
+    def _validate_config(self) -> Optional[str]:
+        """Validate required configuration. Returns error message if invalid."""
         if not self.client_id:
-            raise ValueError("WITHINGS_CLIENT_ID not configured")
+            return "WITHINGS_CLIENT_ID not configured"
         if not self.client_secret:
-            raise ValueError("WITHINGS_CLIENT_SECRET not configured")
+            return "WITHINGS_CLIENT_SECRET not configured"
         if not self.refresh_token:
-            raise ValueError("WITHINGS_REFRESH_TOKEN not configured")
-        return True
+            return "WITHINGS_REFRESH_TOKEN not configured"
+        return None
     
-    async def refresh_token(self) -> Dict[str, Any]:
+    async def refresh_token_from_withings(self) -> Dict[str, Any]:
         """
-        Refresh the Withings OAuth token.
+        Call Withings API to refresh the OAuth token.
         
         Returns:
-            Dict with success status, new tokens, and expiration info.
+            Dict with success status and token data or error message
         """
+        validation_error = self._validate_config()
+        if validation_error:
+            return {"success": False, "error": validation_error}
+        
         try:
-            self._validate_config()
-            
-            # Prepare refresh request
-            data = {
-                "action": "requesttoken",
-                "grant_type": "refresh_token",
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "refresh_token": self.refresh_token
-            }
-            
-            logger.info("Requesting token refresh from Withings API")
-            
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     self.WITHINGS_TOKEN_URL,
-                    data=data,
-                    timeout=30.0
+                    data={
+                        "action": "requesttoken",
+                        "grant_type": "refresh_token",
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                        "refresh_token": self.refresh_token
+                    }
                 )
                 
-            response_data = response.json()
-            
-            if response_data.get("status") != 0:
-                error_msg = f"Withings API error: {response_data}"
-                logger.error(error_msg)
-                return {"success": False, "error": error_msg}
-            
-            body = response_data.get("body", {})
-            new_access_token = body.get("access_token")
-            new_refresh_token = body.get("refresh_token")
-            expires_in = body.get("expires_in", 10800)  # Default 3 hours
-            
-            if not new_access_token:
-                return {"success": False, "error": "No access token in response"}
-            
-            # Calculate expiration time
-            expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
-            expires_at_str = expires_at.isoformat() + "Z"
-            
-            # Update local environment (for current process)
-            os.environ["WITHINGS_ACCESS_TOKEN"] = new_access_token
-            if new_refresh_token:
-                os.environ["WITHINGS_REFRESH_TOKEN"] = new_refresh_token
-            os.environ["WITHINGS_TOKEN_EXPIRES_AT"] = expires_at_str
-            os.environ["WITHINGS_TOKEN_LAST_REFRESHED"] = datetime.utcnow().isoformat() + "Z"
-            
-            logger.info(f"Token refreshed successfully, expires at {expires_at_str}")
-            
-            # Try to update Railway environment variables
-            railway_updated = await self._update_railway_env(
-                new_access_token,
-                new_refresh_token,
-                expires_at_str
-            )
-            
-            return {
-                "success": True,
-                "expires_at": expires_at_str,
-                "expires_in_seconds": expires_in,
-                "railway_updated": railway_updated
-            }
-            
+                response_data = response.json()
+                logger.info(f"Withings API response status: {response_data.get('status')}")
+                
+                # Withings returns status 0 for success
+                if response_data.get("status") == 0:
+                    body = response_data.get("body", {})
+                    
+                    # Calculate expiration time
+                    expires_in = body.get("expires_in", 10800)  # Default 3 hours
+                    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+                    
+                    return {
+                        "success": True,
+                        "access_token": body.get("access_token"),
+                        "refresh_token": body.get("refresh_token"),
+                        "expires_in": expires_in,
+                        "expires_at": expires_at.isoformat(),
+                        "token_type": body.get("token_type", "Bearer"),
+                        "scope": body.get("scope"),
+                        "userid": body.get("userid")
+                    }
+                else:
+                    error_msg = f"Withings API error: status={response_data.get('status')}, error={response_data.get('error')}"
+                    logger.error(error_msg)
+                    return {"success": False, "error": error_msg}
+                    
+        except httpx.TimeoutException:
+            logger.error("Withings API timeout")
+            return {"success": False, "error": "Withings API timeout"}
+        except httpx.RequestError as e:
+            logger.error(f"Withings API request error: {e}")
+            return {"success": False, "error": f"Request error: {str(e)}"}
         except Exception as e:
-            logger.error(f"Token refresh failed: {e}")
+            logger.error(f"Unexpected error during token refresh: {e}")
             return {"success": False, "error": str(e)}
     
-    async def _update_railway_env(self, access_token: str, refresh_token: Optional[str], expires_at: str) -> bool:
+    async def update_railway_variables(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Update Railway environment variables with new tokens.
+        Update Railway environment variables with new token data.
         
+        Args:
+            token_data: Dict containing access_token, refresh_token, expires_at
+            
         Returns:
-            True if Railway update succeeded, False otherwise.
+            Dict with success status
         """
         try:
             from app.services.railway_client import RailwayClient
             
-            client = RailwayClient()
+            railway_client = RailwayClient()
             
-            variables = {
-                "WITHINGS_ACCESS_TOKEN": access_token,
-                "WITHINGS_TOKEN_EXPIRES_AT": expires_at,
-                "WITHINGS_TOKEN_LAST_REFRESHED": datetime.utcnow().isoformat() + "Z"
+            if not railway_client.is_configured():
+                logger.warning("Railway client not configured - tokens not persisted")
+                return {
+                    "success": True,
+                    "persisted": False,
+                    "message": "Tokens refreshed but Railway not configured for persistence"
+                }
+            
+            # Update environment variables
+            variables_to_update = {
+                "WITHINGS_ACCESS_TOKEN": token_data.get("access_token"),
+                "WITHINGS_REFRESH_TOKEN": token_data.get("refresh_token"),
+                "WITHINGS_TOKEN_EXPIRES_AT": token_data.get("expires_at"),
+                "WITHINGS_TOKEN_LAST_REFRESHED": datetime.now(timezone.utc).isoformat()
             }
             
-            if refresh_token:
-                variables["WITHINGS_REFRESH_TOKEN"] = refresh_token
+            result = await railway_client.update_variables(variables_to_update)
             
-            await client.update_variables(variables)
-            logger.info("Railway environment variables updated")
-            return True
-            
-        except ImportError:
-            logger.warning("Railway client not available")
-            return False
+            if result.get("success"):
+                logger.info("Railway environment variables updated successfully")
+                return {"success": True, "persisted": True}
+            else:
+                logger.error(f"Failed to update Railway variables: {result.get('error')}")
+                return {
+                    "success": True,
+                    "persisted": False,
+                    "message": f"Tokens refreshed but failed to persist: {result.get('error')}"
+                }
+                
+        except ImportError as e:
+            logger.error(f"Railway client not available: {e}")
+            return {
+                "success": True,
+                "persisted": False,
+                "message": "Railway client not available"
+            }
         except Exception as e:
-            logger.error(f"Failed to update Railway env vars: {e}")
-            return False
+            logger.error(f"Error updating Railway variables: {e}")
+            return {
+                "success": True,
+                "persisted": False,
+                "message": str(e)
+            }
     
-    def check_token_expiry(self) -> Dict[str, Any]:
+    async def refresh_token(self) -> Dict[str, Any]:
         """
-        Check if the current token is expired or expiring soon.
+        Main method to refresh token and update Railway.
         
         Returns:
-            Dict with expiry status and time until expiration.
+            Dict with success status, new expiration, and persistence status
         """
-        expires_at_str = os.getenv("WITHINGS_TOKEN_EXPIRES_AT")
+        logger.info("Starting token refresh process...")
         
-        if not expires_at_str:
-            return {"status": "unknown", "needs_refresh": True}
+        # Step 1: Refresh token from Withings
+        token_result = await self.refresh_token_from_withings()
         
-        try:
-            expires_at = datetime.fromisoformat(expires_at_str.replace('Z', '+00:00'))
-            now = datetime.utcnow()
-            
-            if expires_at < now:
-                return {"status": "expired", "needs_refresh": True}
-            
-            time_until_expiry = expires_at - now
-            hours_remaining = time_until_expiry.total_seconds() / 3600
-            
-            # Refresh if less than 24 hours remaining
-            needs_refresh = hours_remaining < 24
-            
-            return {
-                "status": "valid" if not needs_refresh else "expiring_soon",
-                "needs_refresh": needs_refresh,
-                "hours_remaining": round(hours_remaining, 2),
-                "expires_at": expires_at_str
-            }
-            
-        except ValueError as e:
-            logger.error(f"Invalid expires_at format: {e}")
-            return {"status": "invalid", "needs_refresh": True}
+        if not token_result.get("success"):
+            return token_result
+        
+        logger.info(f"Token refreshed successfully, expires at: {token_result.get('expires_at')}")
+        
+        # Step 2: Update Railway environment variables
+        railway_result = await self.update_railway_variables(token_result)
+        
+        return {
+            "success": True,
+            "expires_at": token_result.get("expires_at"),
+            "expires_in": token_result.get("expires_in"),
+            "persisted": railway_result.get("persisted", False),
+            "persistence_message": railway_result.get("message")
+        }
