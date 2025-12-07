@@ -1,32 +1,144 @@
 {
   "name": "withings-mcp",
   "version": "1.0.0",
-  "description": "Withings health data integration - Timothy's health optimization tracking",
+  "description": "Withings health data integration - Timothy's body composition, blood pressure, sleep, activity tracking from Body Scan and BPM Connect",
   "type": "http",
   "baseUrl": "https://withings-mcp-production.up.railway.app",
   "tools": [
     {
+      "name": "get_body_composition",
+      "description": "Get Timothy's full body composition: weight, body fat %, muscle mass, hydration, bone mass, visceral fat, nerve health, vascular age",
+      "endpoint": "/data/body-composition",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days of history (default 30)",
+          "required": false,
+          "default": 30
+        }
+      }
+    },
+    {
+      "name": "get_blood_pressure",
+      "description": "Get Timothy's blood pressure readings: systolic, diastolic, and heart rate from Withings BPM Connect",
+      "endpoint": "/data/blood-pressure",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days of history (default 30)",
+          "required": false,
+          "default": 30
+        }
+      }
+    },
+    {
+      "name": "get_heart_rate",
+      "description": "Get Timothy's heart rate measurements",
+      "endpoint": "/data/heart-rate",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days of history (default 30)",
+          "required": false,
+          "default": 30
+        }
+      }
+    },
+    {
+      "name": "get_sleep",
+      "description": "Get Timothy's sleep data: duration, quality, deep sleep, REM, interruptions",
+      "endpoint": "/data/sleep",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days of history (default 30)",
+          "required": false,
+          "default": 30
+        }
+      }
+    },
+    {
+      "name": "get_activity",
+      "description": "Get Timothy's activity data: steps, distance, calories, active minutes",
+      "endpoint": "/data/activity",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days of history (default 7)",
+          "required": false,
+          "default": 7
+        }
+      }
+    },
+    {
+      "name": "get_spo2",
+      "description": "Get Timothy's blood oxygen saturation (SpO2) readings",
+      "endpoint": "/data/spo2",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days of history (default 30)",
+          "required": false,
+          "default": 30
+        }
+      }
+    },
+    {
+      "name": "get_temperature",
+      "description": "Get Timothy's body temperature readings",
+      "endpoint": "/data/temperature",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days of history (default 30)",
+          "required": false,
+          "default": 30
+        }
+      }
+    },
+    {
+      "name": "get_all_health_data",
+      "description": "Get all of Timothy's health data at once: weight, body composition, blood pressure, activity, heart rate, SpO2, temperature, sleep",
+      "endpoint": "/data/all",
+      "method": "GET",
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days of history (default 30)",
+          "required": false,
+          "default": 30
+        }
+      }
+    },
+    {
       "name": "get_observations",
-      "description": "Fetch Withings health observations (Weight, BMI, Heart Rate)",
+      "description": "Get health observations in FHIR-style format",
       "endpoint": "/observations",
       "method": "GET",
       "parameters": {
         "days": {
           "type": "integer",
-          "description": "Number of days to fetch (default: 7)",
-          "required": false
+          "description": "Number of days of history (default 7)",
+          "required": false,
+          "default": 7
         }
       }
     },
     {
       "name": "health_check",
-      "description": "Check service health status",
+      "description": "Check Withings MCP service health status",
       "endpoint": "/health",
       "method": "GET"
     }
   ],
   "authentication": {
-    "type": "bearer",
-    "tokenEnvVar": "WITHINGS_MCP_AUTH_TOKEN"
+    "type": "none"
   }
 }
