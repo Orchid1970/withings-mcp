@@ -1,13 +1,19 @@
 """
 Withings Data Routes
 Endpoints for fetching Withings health metrics, activity, and sleep data
+
+TIMEZONE HANDLING:
+- All Withings timestamps are Unix epoch seconds in UTC
+- This module converts all timestamps to America/Los_Angeles (Pacific) for display
+- Each measurement includes: timestamp (raw), datetime_utc, datetime_pacific, date_local
 """
 
 from fastapi import APIRouter, Query
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import httpx
 import os
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 router = APIRouter()
 
@@ -15,6 +21,9 @@ router = APIRouter()
 ACCESS_TOKEN = os.getenv("WITHINGS_ACCESS_TOKEN", "")
 USER_ID = os.getenv("WITHINGS_USER_ID", "")
 BASE_URL = "https://wbsapi.withings.net"
+
+# Default timezone for display (Timothy's location)
+DEFAULT_TIMEZONE = "America/Los_Angeles"
 
 # Withings measure types reference
 MEASURE_TYPES = {
@@ -43,6 +52,59 @@ MEASURE_TYPES = {
     "fat_mass_segments": 174,
     "muscle_mass_segments": 175,
 }
+
+
+def convert_timestamp(ts: int, tz_name: str = None) -> dict:
+    """
+    Convert Unix timestamp (UTC) to multiple formats.
+    
+    Args:
+        ts: Unix timestamp in seconds (UTC)
+        tz_name: IANA timezone name (e.g., 'America/Los_Angeles', 'America/Boise')
+                 Falls back to DEFAULT_TIMEZONE if not provided
+    
+    Returns:
+        dict with timestamp, datetime_utc, datetime_pacific, date_local
+    """
+    if not ts:
+        return None
+    
+    # Use provided timezone or default
+    local_tz = ZoneInfo(tz_name) if tz_name else ZoneInfo(DEFAULT_TIMEZONE)
+    pacific_tz = ZoneInfo(DEFAULT_TIMEZONE)
+    
+    # Convert from UTC timestamp
+    utc_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    local_dt = utc_dt.astimezone(local_tz)
+    pacific_dt = utc_dt.astimezone(pacific_tz)
+    
+    return {
+        "timestamp": ts,
+        "datetime_utc": utc_dt.isoformat(),
+        "datetime_pacific": pacific_dt.isoformat(),
+        "date_local": pacific_dt.strftime("%Y-%m-%d"),
+        "time_local": pacific_dt.strftime("%H:%M:%S"),
+        "timezone_device": tz_name or DEFAULT_TIMEZONE
+    }
+
+
+def format_measurement_group(grp: dict) -> dict:
+    """
+    Format a measurement group with proper timezone conversion.
+    Extracts common fields and converts timestamps.
+    """
+    ts = grp.get("date")
+    tz_name = grp.get("timezone", DEFAULT_TIMEZONE)
+    
+    time_info = convert_timestamp(ts, tz_name)
+    
+    return {
+        "grpid": grp.get("grpid"),
+        "model": grp.get("model"),
+        "modelid": grp.get("modelid"),
+        **time_info,
+        "measures": grp.get("measures", [])
+    }
 
 
 async def fetch_withings_data(measure_type: int, lookback_days: int = 365) -> dict:
@@ -227,6 +289,13 @@ async def fetch_withings_activity(lookback_days: int = 365) -> dict:
             
             activities = data.get("body", {}).get("activities", [])
             
+            # Activity already has date strings and timezone, but let's add modified timestamp conversion
+            for activity in activities:
+                modified_ts = activity.get("modified")
+                if modified_ts:
+                    tz_name = activity.get("timezone", DEFAULT_TIMEZONE)
+                    activity["modified_info"] = convert_timestamp(modified_ts, tz_name)
+            
             return {
                 "status": "ok",
                 "activities": activities,
@@ -311,6 +380,13 @@ async def fetch_withings_sleep(lookback_days: int = 365) -> dict:
             
             sleep_data = data.get("body", {}).get("series", [])
             
+            # Convert any timestamps in sleep data
+            for sleep in sleep_data:
+                if sleep.get("startdate"):
+                    sleep["start_info"] = convert_timestamp(sleep.get("startdate"))
+                if sleep.get("enddate"):
+                    sleep["end_info"] = convert_timestamp(sleep.get("enddate"))
+            
             return {
                 "status": "ok",
                 "sleep": sleep_data,
@@ -325,6 +401,7 @@ async def fetch_withings_sleep(lookback_days: int = 365) -> dict:
 # ============== ENDPOINTS ==============
 # Note: All endpoints support both 'days' and 'lookback_days' query params
 # 'days' is used by MCP protocol, 'lookback_days' is the internal param
+# All timestamps are converted to America/Los_Angeles (Pacific) timezone
 
 @router.get("/weight")
 async def get_weight(
@@ -333,8 +410,7 @@ async def get_weight(
 ):
     """
     Fetch weight measurements (measure_type=1)
-    Returns weight in kg for the past N days (default 30)
-    Converts to lbs in the response for convenience
+    Returns weight in kg and lbs with proper Pacific timezone conversion
     """
     effective_days = days if days is not None else lookback_days
     result = await fetch_withings_data(measure_type=1, lookback_days=effective_days)
@@ -342,26 +418,33 @@ async def get_weight(
     if result.get("error"):
         return result
     
-    # Process measurements to add lbs conversion
+    # Process measurements with timezone conversion
     processed = []
     for grp in result.get("measurements", []):
+        ts = grp.get("date")
+        tz_name = grp.get("timezone", DEFAULT_TIMEZONE)
+        time_info = convert_timestamp(ts, tz_name)
+        
         for measure in grp.get("measures", []):
             if measure.get("type") == 1:  # weight
                 kg = measure.get("value") * (10 ** measure.get("unit", 0))
                 lbs = kg * 2.20462
                 processed.append({
-                    "timestamp": grp.get("date"),
+                    **time_info,
                     "kg": round(kg, 2),
                     "lbs": round(lbs, 1),
                     "model": grp.get("model"),
-                    "timezone": grp.get("timezone")
                 })
+    
+    # Sort by timestamp descending (most recent first)
+    processed.sort(key=lambda x: x["timestamp"], reverse=True)
     
     return {
         "status": "ok",
         "weight_measurements": processed,
         "count": len(processed),
         "days": effective_days,
+        "timezone_note": "All times converted to America/Los_Angeles (Pacific)",
         "unit_note": "Weight provided in both kg and lbs"
     }
 
@@ -372,7 +455,7 @@ async def get_metrics(
     lookback_days: int = Query(365, ge=1, le=1825)
 ):
     """
-    Fetch weight metrics (measure_type=1)
+    Fetch weight metrics (measure_type=1) - raw format
     Returns weight measurements for the past N days (default 365)
     """
     effective_days = days if days is not None else lookback_days
@@ -399,18 +482,53 @@ async def get_blood_pressure(
 ):
     """
     Fetch blood pressure data (systolic=10, diastolic=9)
-    Returns BP readings for the past N days (default 365)
+    Returns BP readings with proper Pacific timezone conversion
     """
     effective_days = days if days is not None else lookback_days
-    systolic = await fetch_withings_data(measure_type=10, lookback_days=effective_days)
-    diastolic = await fetch_withings_data(measure_type=9, lookback_days=effective_days)
+    systolic_result = await fetch_withings_data(measure_type=10, lookback_days=effective_days)
+    diastolic_result = await fetch_withings_data(measure_type=9, lookback_days=effective_days)
+    
+    if systolic_result.get("error"):
+        return systolic_result
+    
+    # Build a map of grpid -> diastolic value
+    diastolic_map = {}
+    for grp in diastolic_result.get("measurements", []):
+        grpid = grp.get("grpid")
+        for measure in grp.get("measures", []):
+            if measure.get("type") == 9:
+                diastolic_map[grpid] = measure.get("value")
+    
+    # Process systolic and combine with diastolic
+    processed = []
+    for grp in systolic_result.get("measurements", []):
+        ts = grp.get("date")
+        tz_name = grp.get("timezone", DEFAULT_TIMEZONE)
+        time_info = convert_timestamp(ts, tz_name)
+        grpid = grp.get("grpid")
+        
+        for measure in grp.get("measures", []):
+            if measure.get("type") == 10:  # systolic
+                systolic_val = measure.get("value")
+                diastolic_val = diastolic_map.get(grpid)
+                
+                processed.append({
+                    **time_info,
+                    "systolic": systolic_val,
+                    "diastolic": diastolic_val,
+                    "reading": f"{systolic_val}/{diastolic_val}" if diastolic_val else f"{systolic_val}/-",
+                    "model": grp.get("model"),
+                })
+    
+    # Sort by timestamp descending
+    processed.sort(key=lambda x: x["timestamp"], reverse=True)
     
     return {
         "status": "ok",
-        "systolic": systolic.get("measurements", []),
-        "diastolic": diastolic.get("measurements", []),
-        "count": len(systolic.get("measurements", [])),
-        "days": effective_days
+        "blood_pressure": processed,
+        "count": len(processed),
+        "days": effective_days,
+        "timezone_note": "All times converted to America/Los_Angeles (Pacific)"
     }
 
 
@@ -435,10 +553,40 @@ async def get_heart_rate(
 ):
     """
     Fetch resting heart rate (measure_type=11)
-    Returns HR readings from scale measurements
+    Returns HR readings with proper Pacific timezone conversion
     """
     effective_days = days if days is not None else lookback_days
-    return await fetch_withings_data(measure_type=11, lookback_days=effective_days)
+    result = await fetch_withings_data(measure_type=11, lookback_days=effective_days)
+    
+    if result.get("error"):
+        return result
+    
+    # Process measurements with timezone conversion
+    processed = []
+    for grp in result.get("measurements", []):
+        ts = grp.get("date")
+        tz_name = grp.get("timezone", DEFAULT_TIMEZONE)
+        time_info = convert_timestamp(ts, tz_name)
+        
+        for measure in grp.get("measures", []):
+            if measure.get("type") == 11:  # heart rate
+                bpm = measure.get("value")
+                processed.append({
+                    **time_info,
+                    "bpm": bpm,
+                    "model": grp.get("model"),
+                })
+    
+    # Sort by timestamp descending
+    processed.sort(key=lambda x: x["timestamp"], reverse=True)
+    
+    return {
+        "status": "ok",
+        "heart_rate": processed,
+        "count": len(processed),
+        "days": effective_days,
+        "timezone_note": "All times converted to America/Los_Angeles (Pacific)"
+    }
 
 
 @router.get("/spo2")
@@ -473,20 +621,7 @@ async def get_body_composition(
     lookback_days: int = Query(365, ge=1, le=1825)
 ):
     """
-    Fetch all Body Scan / body composition metrics in one call:
-    - Weight (1)
-    - Fat Free Mass (5)
-    - Fat Ratio % (6)
-    - Fat Mass (8)
-    - Muscle Mass (76)
-    - Hydration (77)
-    - Bone Mass (88)
-    - Visceral Fat (170)
-    - Nerve Health/ECG (169)
-    - Extracellular Water (168)
-    - Intracellular Water (167)
-    - Vascular Age (155)
-    - Pulse Wave Velocity (91)
+    Fetch all Body Scan / body composition metrics in one call with timezone conversion
     """
     effective_days = days if days is not None else lookback_days
     measure_types = [1, 5, 6, 8, 76, 77, 88, 170, 169, 168, 167, 155, 91]
@@ -494,23 +629,6 @@ async def get_body_composition(
     
     if result.get("error"):
         return result
-    
-    # Organize measurements by type for easier consumption
-    organized = {
-        "weight": [],
-        "fat_free_mass": [],
-        "fat_ratio": [],
-        "fat_mass": [],
-        "muscle_mass": [],
-        "hydration": [],
-        "bone_mass": [],
-        "visceral_fat": [],
-        "nerve_health": [],
-        "extracellular_water": [],
-        "intracellular_water": [],
-        "vascular_age": [],
-        "pulse_wave_velocity": [],
-    }
     
     type_to_name = {
         1: "weight",
@@ -528,22 +646,33 @@ async def get_body_composition(
         91: "pulse_wave_velocity",
     }
     
+    # Organize measurements by type with timezone conversion
+    organized = {name: [] for name in type_to_name.values()}
+    
     for grp in result.get("measurements", []):
-        timestamp = grp.get("date")
+        ts = grp.get("date")
+        tz_name = grp.get("timezone", DEFAULT_TIMEZONE)
+        time_info = convert_timestamp(ts, tz_name)
+        
         for measure in grp.get("measures", []):
             mtype = measure.get("type")
             if mtype in type_to_name:
                 value = measure.get("value") * (10 ** measure.get("unit", 0))
                 organized[type_to_name[mtype]].append({
-                    "timestamp": timestamp,
-                    "value": value
+                    **time_info,
+                    "value": round(value, 2) if isinstance(value, float) else value
                 })
+    
+    # Sort each category by timestamp descending
+    for key in organized:
+        organized[key].sort(key=lambda x: x["timestamp"], reverse=True)
     
     return {
         "status": "ok",
         "body_composition": organized,
         "raw_count": result.get("count", 0),
-        "days": effective_days
+        "days": effective_days,
+        "timezone_note": "All times converted to America/Los_Angeles (Pacific)"
     }
 
 
@@ -672,6 +801,7 @@ async def get_activity(
     """
     Fetch activity data (steps, calories, distance, heart rate zones, etc.)
     Returns activity measurements for the past N days (default 365)
+    Note: Activity already includes date strings and timezone from Withings
     """
     effective_days = days if days is not None else lookback_days
     return await fetch_withings_activity(lookback_days=effective_days)
@@ -699,9 +829,10 @@ async def get_all_data(
     Fetch all available health data (weight, blood pressure, body composition, activity, sleep)
     """
     effective_days = days if days is not None else lookback_days
-    weight = await fetch_withings_data(measure_type=1, lookback_days=effective_days)
+    weight = await get_weight(days=effective_days)
     bp = await get_blood_pressure(days=effective_days)
     body_comp = await get_body_composition(days=effective_days)
+    hr = await get_heart_rate(days=effective_days)
     activity = await fetch_withings_activity(lookback_days=effective_days)
     sleep = await fetch_withings_sleep(lookback_days=effective_days)
     blood_glucose = await fetch_withings_data(measure_type=148, lookback_days=effective_days)
@@ -712,9 +843,11 @@ async def get_all_data(
             "weight": weight,
             "blood_pressure": bp,
             "body_composition": body_comp,
+            "heart_rate": hr,
             "blood_glucose": blood_glucose,
             "activity": activity,
             "sleep": sleep
         },
-        "days": effective_days
+        "days": effective_days,
+        "timezone_note": "All times converted to America/Los_Angeles (Pacific)"
     }
