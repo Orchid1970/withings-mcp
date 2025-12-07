@@ -231,7 +231,11 @@ async def fetch_withings_activity(lookback_days: int = 365) -> dict:
                 "status": "ok",
                 "activities": activities,
                 "count": len(activities),
-                "lookback_days": lookback_days
+                "lookback_days": lookback_days,
+                "date_range": {
+                    "start": start_date.strftime("%Y-%m-%d"),
+                    "end": end_date.strftime("%Y-%m-%d")
+                }
             }
     
     except Exception as e:
@@ -319,82 +323,155 @@ async def fetch_withings_sleep(lookback_days: int = 365) -> dict:
 
 
 # ============== ENDPOINTS ==============
+# Note: All endpoints support both 'days' and 'lookback_days' query params
+# 'days' is used by MCP protocol, 'lookback_days' is the internal param
+
+@router.get("/weight")
+async def get_weight(
+    days: Optional[int] = Query(None, ge=1, le=1825, description="Number of days (alias for lookback_days)"),
+    lookback_days: int = Query(30, ge=1, le=1825, description="Number of days of history")
+):
+    """
+    Fetch weight measurements (measure_type=1)
+    Returns weight in kg for the past N days (default 30)
+    Converts to lbs in the response for convenience
+    """
+    effective_days = days if days is not None else lookback_days
+    result = await fetch_withings_data(measure_type=1, lookback_days=effective_days)
+    
+    if result.get("error"):
+        return result
+    
+    # Process measurements to add lbs conversion
+    processed = []
+    for grp in result.get("measurements", []):
+        for measure in grp.get("measures", []):
+            if measure.get("type") == 1:  # weight
+                kg = measure.get("value") * (10 ** measure.get("unit", 0))
+                lbs = kg * 2.20462
+                processed.append({
+                    "timestamp": grp.get("date"),
+                    "kg": round(kg, 2),
+                    "lbs": round(lbs, 1),
+                    "model": grp.get("model"),
+                    "timezone": grp.get("timezone")
+                })
+    
+    return {
+        "status": "ok",
+        "weight_measurements": processed,
+        "count": len(processed),
+        "days": effective_days,
+        "unit_note": "Weight provided in both kg and lbs"
+    }
+
 
 @router.get("/metrics")
-async def get_metrics(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_metrics(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch weight metrics (measure_type=1)
     Returns weight measurements for the past N days (default 365)
     """
-    return await fetch_withings_data(measure_type=1, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=1, lookback_days=effective_days)
 
 
 @router.get("/height")
-async def get_height(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_height(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch height (measure_type=4)
     Returns height in meters
     """
-    return await fetch_withings_data(measure_type=4, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=4, lookback_days=effective_days)
 
 
 @router.get("/blood-pressure")
-async def get_blood_pressure(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_blood_pressure(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch blood pressure data (systolic=10, diastolic=9)
     Returns BP readings for the past N days (default 365)
     """
-    systolic = await fetch_withings_data(measure_type=10, lookback_days=lookback_days)
-    diastolic = await fetch_withings_data(measure_type=9, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    systolic = await fetch_withings_data(measure_type=10, lookback_days=effective_days)
+    diastolic = await fetch_withings_data(measure_type=9, lookback_days=effective_days)
     
     return {
         "status": "ok",
         "systolic": systolic.get("measurements", []),
         "diastolic": diastolic.get("measurements", []),
         "count": len(systolic.get("measurements", [])),
-        "lookback_days": lookback_days
+        "days": effective_days
     }
 
 
 @router.get("/blood-glucose")
-async def get_blood_glucose(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_blood_glucose(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch blood glucose data (measure_type=148)
     Returns blood glucose readings in mg/dL for the past N days (default 365)
     Note: Requires CGM or glucose meter synced via HealthKit to Withings
     """
-    return await fetch_withings_data(measure_type=148, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=148, lookback_days=effective_days)
 
 
 @router.get("/heart-rate")
-async def get_heart_rate(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_heart_rate(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch resting heart rate (measure_type=11)
     Returns HR readings from scale measurements
     """
-    return await fetch_withings_data(measure_type=11, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=11, lookback_days=effective_days)
 
 
 @router.get("/spo2")
-async def get_spo2(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_spo2(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch SpO2/oxygen saturation (measure_type=54)
     Returns pulse oximetry readings
     """
-    return await fetch_withings_data(measure_type=54, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=54, lookback_days=effective_days)
 
 
 @router.get("/temperature")
-async def get_temperature(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_temperature(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch body temperature readings (measure_type=71)
     Returns temperature in Celsius from Withings Thermo
     """
-    return await fetch_withings_data(measure_type=71, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=71, lookback_days=effective_days)
 
 
 @router.get("/body-composition")
-async def get_body_composition(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_body_composition(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch all Body Scan / body composition metrics in one call:
     - Weight (1)
@@ -411,8 +488,9 @@ async def get_body_composition(lookback_days: int = Query(365, ge=1, le=1825)):
     - Vascular Age (155)
     - Pulse Wave Velocity (91)
     """
+    effective_days = days if days is not None else lookback_days
     measure_types = [1, 5, 6, 8, 76, 77, 88, 170, 169, 168, 167, 155, 91]
-    result = await fetch_multiple_measures(measure_types, lookback_days=lookback_days)
+    result = await fetch_multiple_measures(measure_types, lookback_days=effective_days)
     
     if result.get("error"):
         return result
@@ -465,120 +543,168 @@ async def get_body_composition(lookback_days: int = Query(365, ge=1, le=1825)):
         "status": "ok",
         "body_composition": organized,
         "raw_count": result.get("count", 0),
-        "lookback_days": lookback_days
+        "days": effective_days
     }
 
 
 @router.get("/fat-mass")
-async def get_fat_mass(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_fat_mass(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch fat mass (measure_type=8)
     Returns fat mass in kg
     """
-    return await fetch_withings_data(measure_type=8, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=8, lookback_days=effective_days)
 
 
 @router.get("/fat-ratio")
-async def get_fat_ratio(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_fat_ratio(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch fat ratio/percentage (measure_type=6)
     Returns body fat percentage
     """
-    return await fetch_withings_data(measure_type=6, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=6, lookback_days=effective_days)
 
 
 @router.get("/muscle-mass")
-async def get_muscle_mass(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_muscle_mass(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch muscle mass (measure_type=76)
     Returns muscle mass in kg from Body Scan
     """
-    return await fetch_withings_data(measure_type=76, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=76, lookback_days=effective_days)
 
 
 @router.get("/bone-mass")
-async def get_bone_mass(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_bone_mass(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch bone mass (measure_type=88)
     Returns bone mass in kg from Body Scan
     """
-    return await fetch_withings_data(measure_type=88, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=88, lookback_days=effective_days)
 
 
 @router.get("/hydration")
-async def get_hydration(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_hydration(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch hydration percentage (measure_type=77)
     Returns body water percentage from Body Scan
     """
-    return await fetch_withings_data(measure_type=77, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=77, lookback_days=effective_days)
 
 
 @router.get("/visceral-fat")
-async def get_visceral_fat(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_visceral_fat(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch visceral fat index (measure_type=170)
     Returns visceral fat rating from Body Scan
     """
-    return await fetch_withings_data(measure_type=170, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=170, lookback_days=effective_days)
 
 
 @router.get("/nerve-health")
-async def get_nerve_health(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_nerve_health(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch nerve health/ECG score (measure_type=169)
     Returns nerve health assessment from Body Scan
     """
-    return await fetch_withings_data(measure_type=169, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=169, lookback_days=effective_days)
 
 
 @router.get("/vascular-age")
-async def get_vascular_age(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_vascular_age(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch vascular age (measure_type=155)
     Returns estimated vascular age from Body Scan
     """
-    return await fetch_withings_data(measure_type=155, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=155, lookback_days=effective_days)
 
 
 @router.get("/pulse-wave-velocity")
-async def get_pulse_wave_velocity(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_pulse_wave_velocity(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch pulse wave velocity (measure_type=91)
     Returns PWV in m/s - indicator of arterial stiffness
     """
-    return await fetch_withings_data(measure_type=91, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_data(measure_type=91, lookback_days=effective_days)
 
 
 @router.get("/activity")
-async def get_activity(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_activity(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch activity data (steps, calories, distance, heart rate zones, etc.)
     Returns activity measurements for the past N days (default 365)
     """
-    return await fetch_withings_activity(lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_activity(lookback_days=effective_days)
 
 
 @router.get("/sleep")
-async def get_sleep(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_sleep(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch sleep summary data (duration, quality, stages, HR, RR, snoring, etc.)
     Returns sleep measurements for the past N days (default 365)
     """
-    return await fetch_withings_sleep(lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    return await fetch_withings_sleep(lookback_days=effective_days)
 
 
 @router.get("/all")
-async def get_all_data(lookback_days: int = Query(365, ge=1, le=1825)):
+async def get_all_data(
+    days: Optional[int] = Query(None, ge=1, le=1825),
+    lookback_days: int = Query(365, ge=1, le=1825)
+):
     """
     Fetch all available health data (weight, blood pressure, body composition, activity, sleep)
     """
-    weight = await fetch_withings_data(measure_type=1, lookback_days=lookback_days)
-    bp = await get_blood_pressure(lookback_days=lookback_days)
-    body_comp = await get_body_composition(lookback_days=lookback_days)
-    activity = await fetch_withings_activity(lookback_days=lookback_days)
-    sleep = await fetch_withings_sleep(lookback_days=lookback_days)
-    blood_glucose = await fetch_withings_data(measure_type=148, lookback_days=lookback_days)
+    effective_days = days if days is not None else lookback_days
+    weight = await fetch_withings_data(measure_type=1, lookback_days=effective_days)
+    bp = await get_blood_pressure(days=effective_days)
+    body_comp = await get_body_composition(days=effective_days)
+    activity = await fetch_withings_activity(lookback_days=effective_days)
+    sleep = await fetch_withings_sleep(lookback_days=effective_days)
+    blood_glucose = await fetch_withings_data(measure_type=148, lookback_days=effective_days)
     
     return {
         "status": "ok",
@@ -590,5 +716,5 @@ async def get_all_data(lookback_days: int = Query(365, ge=1, le=1825)):
             "activity": activity,
             "sleep": sleep
         },
-        "lookback_days": lookback_days
+        "days": effective_days
     }
