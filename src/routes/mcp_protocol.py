@@ -135,16 +135,16 @@ TOOLS = [
     }
 ]
 
-# Map tool names to internal endpoints
+# Map tool names to internal endpoints - FIXED: use /data/ prefix
 TOOL_ENDPOINTS = {
-    "get_weight": "/withings/weight",
-    "get_body_composition": "/withings/body-composition",
-    "get_blood_pressure": "/withings/blood-pressure",
-    "get_heart_rate": "/withings/heart-rate",
-    "get_activity": "/withings/activity",
-    "get_spo2": "/withings/spo2",
-    "get_sleep": "/withings/sleep",
-    "get_all_health_data": "/withings/all"
+    "get_weight": "/data/weight",
+    "get_body_composition": "/data/body-composition",
+    "get_blood_pressure": "/data/blood-pressure",
+    "get_heart_rate": "/data/heart-rate",
+    "get_activity": "/data/activity",
+    "get_spo2": "/data/spo2",
+    "get_sleep": "/data/sleep",
+    "get_all_health_data": "/data/all"
 }
 
 
